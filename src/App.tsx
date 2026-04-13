@@ -533,7 +533,18 @@ function App() {
 
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
-                  data={data}
+                  data={data.map((d, i) => {
+                    const isLastObserved = !d.is_prediction && data[i + 1]?.is_prediction;
+                    return {
+                      ...d,
+                      actual_value: !d.is_prediction ? d.value : null,
+                      predicted_value: d.is_prediction ? d.value : (isLastObserved ? d.value : null),
+                      anomaly_value: d.is_anomaly ? d.value : null,
+                      pred_interval: d.is_prediction && d.low !== undefined && d.high !== undefined 
+                        ? [d.low, d.high] 
+                        : (isLastObserved ? [d.value, d.value] : null)
+                    };
+                  })}
                   margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
                   onMouseDown={handleChartMouseDown}
                   onMouseMove={handleChartMouseMove}
@@ -576,7 +587,7 @@ function App() {
                   
                   <Line 
                     type="monotone" 
-                    dataKey={(d) => d.is_prediction ? null : d.value} 
+                    dataKey="actual_value" 
                     stroke="#3b82f6" 
                     strokeWidth={2}
                     dot={false}
@@ -586,7 +597,7 @@ function App() {
                   
                   <Line 
                     type="monotone" 
-                    dataKey={(d) => d.is_prediction ? d.value : null} 
+                    dataKey="predicted_value" 
                     stroke="#8b5cf6" 
                     strokeWidth={2} 
                     strokeDasharray="5 5"
@@ -596,7 +607,7 @@ function App() {
                   />
                   
                   <Scatter 
-                    dataKey={(d) => d.is_anomaly ? d.value : null} 
+                    dataKey="anomaly_value" 
                     fill="#ef4444" 
                     name="Anomaly"
                   />
@@ -614,7 +625,7 @@ function App() {
 
                   <Area
                     type="monotone"
-                    dataKey={(d) => d.is_prediction ? [d.low, d.high] : null}
+                    dataKey="pred_interval"
                     stroke="none"
                     fill="#8b5cf6"
                     fillOpacity={0.15}
