@@ -27,7 +27,7 @@ jobs:
       - name: build and release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac -p always
+        run: npm run dist -- --mac -p always
 
   update-tap:
     needs: publish-release
@@ -44,6 +44,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
+          gh release edit v$VERSION --draft=false || true
           gh release download v$VERSION --pattern "*.dmg" --dir .
           ls -R
 
