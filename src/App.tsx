@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key } from 'lucide-react';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea
 } from 'recharts';
 
 import { processCSV } from './lib/duckdb';
@@ -13,6 +13,7 @@ interface DataPoint {
   value: number;
   is_anomaly?: boolean;
   is_prediction?: boolean;
+  counterfactual?: number;
 }
 
 function App() {
@@ -25,6 +26,13 @@ function App() {
   const [bqProject, setBqProject] = useState('');
   const [bqQuery, setBqQuery] = useState('SELECT *\nFROM `bigquery-public-data.covid19_open_data.covid19_open_data`\nLIMIT 100');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  
+  // Selection & Timezone states
+  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [refAreaLeft, setRefAreaLeft] = useState<number | string | null>(null);
+  const [refAreaRight, setRefAreaRight] = useState<number | string | null>(null);
+  const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
+  const [isCounterfactualLoading, setIsCounterfactualLoading] = useState(false);
   
   const handleDataInput = async (content: string) => {
     try {
@@ -79,12 +87,73 @@ function App() {
       
       setData([...chartDataWithAnomalies, ...predictionData]);
       setStatus('Complete');
+      setSelectionRange(null); // Reset selection on new data
       
     } catch (error) {
       console.error(error);
       setStatus(`Error: ${(error as Error).message}`);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const runCounterfactual = async () => {
+    if (!selectionRange || data.length === 0) return;
+    
+    try {
+      setIsCounterfactualLoading(true);
+      setStatus('Running Counterfactual Analysis...');
+      
+      const observedData = data.filter(d => !d.is_prediction);
+      const valuesArray = observedData.map(d => d.value);
+      
+      const { counterfactual } = await analyzeTimeSeries(
+        valuesArray, 
+        20, 
+        selectionRange
+      );
+      
+      if (counterfactual) {
+        // Append counterfactual data to the existing data points
+        // starting from selectionRange[0]
+        const newData = [...data];
+        const startIdx = selectionRange[0];
+        
+        // Mark counterfactual points
+        const updatedData = newData.map((item, idx) => {
+          const cfIdx = idx - startIdx;
+          if (cfIdx >= 0 && cfIdx < counterfactual.length) {
+            return { ...item, counterfactual: counterfactual[cfIdx] };
+          }
+          return item;
+        });
+        
+        setData(updatedData);
+        setStatus('Counterfactual Analysis Complete');
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(`Error: ${(error as Error).message}`);
+    } finally {
+      setIsCounterfactualLoading(false);
+    }
+  };
+
+  const formatTime = (time: string | number) => {
+    if (typeof time === 'number') return time;
+    try {
+      const date = new Date(time);
+      if (isNaN(date.getTime())) return time;
+      return new Intl.DateTimeFormat('ja-JP', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date);
+    } catch {
+      return time;
     }
   };
 
@@ -205,6 +274,35 @@ function App() {
 
   // Extract separate arrays for charting to handle different styles
   // We'll just render it normally with Recharts using conditional properties
+  
+  const handleChartMouseDown = (e: any) => {
+    if (e && e.activeTooltipIndex !== undefined) {
+      setRefAreaLeft(e.activeTooltipIndex);
+    }
+  };
+
+  const handleChartMouseMove = (e: any) => {
+    if (refAreaLeft !== null && e && e.activeTooltipIndex !== undefined) {
+      setRefAreaRight(e.activeTooltipIndex);
+    }
+  };
+
+  const handleChartMouseUp = () => {
+    if (refAreaLeft !== null && refAreaRight !== null) {
+      const left = Number(refAreaLeft);
+      const right = Number(refAreaRight);
+      const start = Math.min(left, right);
+      const end = Math.max(left, right);
+      
+      // Only select if it's within actual data (not prediction)
+      const observedCount = data.filter(d => !d.is_prediction).length;
+      if (start < observedCount) {
+        setSelectionRange([start, Math.min(end, observedCount - 1)]);
+      }
+    }
+    setRefAreaLeft(null);
+    setRefAreaRight(null);
+  };
   
   return (
     <div className="app-container">
@@ -366,18 +464,88 @@ function App() {
           
           {data.length > 0 ? (
             <div className="h-full w-full min-h-[400px]" style={{ flex: 1 }}>
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex gap-4 items-center">
+                  <div className="text-sm font-medium text-slate-400">Timezone:</div>
+                  <select 
+                    className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                  >
+                    <option value="UTC">UTC</option>
+                    <option value="Asia/Tokyo">Tokyo (JST)</option>
+                    <option value="America/New_York">New York (EST/EDT)</option>
+                    <option value="Europe/London">London (GMT/BST)</option>
+                    <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>Local ({Intl.DateTimeFormat().resolvedOptions().timeZone})</option>
+                  </select>
+                </div>
+                
+                {selectionRange && (
+                  <div className="flex gap-2 items-center fade-in">
+                    <span className="text-xs text-slate-400">
+                      Selected: Index {selectionRange[0]} - {selectionRange[1]}
+                    </span>
+                    <button 
+                      className="btn btn-primary text-xs py-1 px-3"
+                      onClick={runCounterfactual}
+                      disabled={isCounterfactualLoading}
+                    >
+                      <Sparkles className="w-3 h-3" /> Estimate Effect
+                    </button>
+                    <button 
+                      className="btn text-xs py-1 px-3 bg-slate-700 hover:bg-slate-600"
+                      onClick={() => setSelectionRange(null)}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={data}
                   margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                  onMouseDown={handleChartMouseDown}
+                  onMouseMove={handleChartMouseMove}
+                  onMouseUp={handleChartMouseUp}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                  <XAxis dataKey="index" stroke="#94a3b8" />
+                  <XAxis 
+                    dataKey="index" 
+                    stroke="#94a3b8" 
+                    tickFormatter={formatTime}
+                    minTickGap={30}
+                  />
                   <YAxis stroke="#94a3b8" />
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
                     itemStyle={{ color: '#f8fafc' }}
+                    labelFormatter={formatTime}
                   />
+                  
+                  {/* Selection Highlight */}
+                  {(refAreaLeft !== null && refAreaRight !== null) && (
+                    /* @ts-ignore - Recharts internal components sometimes have tricky types */
+                    <ReferenceArea
+                      x1={data[Number(refAreaLeft)]?.index}
+                      x2={data[Number(refAreaRight)]?.index}
+                      strokeOpacity={0.3}
+                      fill="rgba(59, 130, 246, 0.2)"
+                    />
+                  )}
+                  
+                  {selectionRange && (
+                    /* @ts-ignore */
+                    <ReferenceArea
+                      x1={data[selectionRange[0]]?.index}
+                      x2={data[selectionRange[1]]?.index}
+                      strokeOpacity={0.3}
+                      fill="rgba(139, 92, 246, 0.15)"
+                      stroke="#8b5cf6"
+                      strokeDasharray="3 3"
+                    />
+                  )}
                   
                   {/* Actual Data Line */}
                   <Line 
@@ -408,13 +576,26 @@ function App() {
                     fill="#ef4444" 
                     name="Anomaly"
                   />
+
+                  {/* Counterfactual Line */}
+                  <Line 
+                    type="monotone" 
+                    dataKey="counterfactual" 
+                    stroke="#10b981" 
+                    strokeWidth={2} 
+                    strokeDasharray="3 3"
+                    dot={false}
+                    name="No-Event Counterfactual"
+                    connectNulls
+                  />
                 </LineChart>
               </ResponsiveContainer>
               
-              <div className="flex gap-4 mt-4 text-sm justify-center">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Actual Data</div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500 border border-violet-500" style={{ borderStyle: 'dashed' }}></div> Forecast</div>
+              <div className="flex gap-4 mt-4 text-sm justify-center flex-wrap">
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Actual</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500 border border-violet-500" style={{ borderStyle: 'dotted' }}></div> Forecast</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500"></div> Anomaly</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-dashed border-emerald-500 bg-transparent"></div> Counterfactual</div>
               </div>
             </div>
           ) : (

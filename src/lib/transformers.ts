@@ -1,4 +1,8 @@
-export async function analyzeTimeSeries(data: number[], forecastLength: number = 20): Promise<{forecast: number[], anomalies: number[]}> {
+export async function analyzeTimeSeries(
+  data: number[], 
+  forecastLength: number = 20, 
+  excludeRange?: [number, number]
+): Promise<{forecast: number[], anomalies: number[], counterfactual?: number[]}> {
   console.log("Requesting TimesFM analysis from Python Backend...");
   
   try {
@@ -9,7 +13,8 @@ export async function analyzeTimeSeries(data: number[], forecastLength: number =
       },
       body: JSON.stringify({
         data,
-        forecast_length: forecastLength
+        forecast_length: forecastLength,
+        exclude_range: excludeRange
       }),
     });
     
@@ -19,7 +24,11 @@ export async function analyzeTimeSeries(data: number[], forecastLength: number =
     }
     
     const result = await response.json();
-    return { forecast: result.forecast, anomalies: result.anomalies };
+    return { 
+      forecast: result.forecast, 
+      anomalies: result.anomalies,
+      counterfactual: result.counterfactual 
+    };
   } catch (err) {
     console.error("Failed to connect to Python backend:", err);
     throw new Error("Cannot connect to TimesFM background service. Ensure the python server is running.");
