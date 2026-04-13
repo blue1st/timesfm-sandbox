@@ -26,7 +26,7 @@ jobs:
           VERSION=${{ github.ref_name }}
           # Remove 'v' prefix if present
           VERSION_NUM=${VERSION#v}
-          npm version $VERSION_NUM --no-git-tag-version
+          npm version $VERSION_NUM --no-git-tag-version --allow-same-version
 
       - name: install dependencies
         run: npm install
@@ -50,7 +50,7 @@ jobs:
         run: |
           VERSION=${{ github.ref_name }}
           VERSION_NUM=${VERSION#v}
-          npm version $VERSION_NUM --no-git-tag-version
+          npm version $VERSION_NUM --no-git-tag-version --allow-same-version
 
       - name: Download artifacts from release
         env:
