@@ -149,7 +149,9 @@ function App() {
     setStatus('Counterfactual Analysis Reset');
   };
 
-  const formatTime = (time: string | number) => {
+  const formatTime = (time: any): string => {
+    if (time === null || time === undefined) return '';
+    
     let dateInput: any = time;
     
     if (typeof time === 'number') {
@@ -167,7 +169,7 @@ function App() {
     
     try {
       const date = new Date(dateInput);
-      if (isNaN(date.getTime())) return time;
+      if (isNaN(date.getTime())) return String(time);
       return new Intl.DateTimeFormat('ja-JP', {
         timeZone: timezone,
         year: 'numeric',
@@ -177,7 +179,7 @@ function App() {
         minute: '2-digit'
       }).format(date);
     } catch {
-      return time;
+      return String(time);
     }
   };
 
