@@ -21,6 +21,13 @@ jobs:
         with:
           node-version: lts/*
 
+      - name: update package.json version from tag
+        run: |
+          VERSION=${{ github.ref_name }}
+          # Remove 'v' prefix if present
+          VERSION_NUM=${VERSION#v}
+          npm version $VERSION_NUM --no-git-tag-version
+
       - name: install dependencies
         run: npm install
 
@@ -34,18 +41,24 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: update package.json version from tag
+        run: |
+          VERSION=${{ github.ref_name }}
+          VERSION_NUM=${VERSION#v}
+          npm version $VERSION_NUM --no-git-tag-version
 
       - name: Download artifacts from release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          gh release edit v$VERSION --draft=false || true
-          gh release download v$VERSION --pattern "*.dmg" --dir .
+          TAG_NAME=${{ github.ref_name }}
+          gh release edit "$TAG_NAME" --draft=false || true
+          gh release download "$TAG_NAME" --pattern "*.dmg" --dir .
           ls -R
 
       - name: Update Homebrew Tap
