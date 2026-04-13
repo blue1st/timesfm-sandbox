@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key } from 'lucide-react';
+import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key, X } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea
 } from 'recharts';
@@ -39,8 +39,6 @@ function App() {
       setIsProcessing(true);
       setStatus('Loading DuckDB & parsing data...');
       
-      // We assume simple CSV/TSV. For robustness we try to guess structure, 
-      // but let's just let DuckDB parse it with read_csv_auto.
       const rows = await processCSV('input.csv', content);
       
       if (rows.length === 0) {
@@ -48,46 +46,53 @@ function App() {
       }
       
       const keys = Object.keys(rows[0]);
-      // Assuming first column is time/index, second is value, or just 1 column as value
       const valCol = keys.length > 1 ? keys[1] : keys[0];
       const timeCol = keys.length > 1 ? keys[0] : null;
       
       setStatus('Detecting anomalies...');
       
-      // DuckDB parsing ONLY now, as Anomaly Detection moves to TimesFM
       const chartData: DataPoint[] = rows.map((row, i) => ({
         index: timeCol ? row[timeCol] : (row._index ?? i),
         value: Number(row[valCol]),
-        is_anomaly: false // Will be updated by TimesFM soon
+        is_anomaly: false
       }));
       
       setData(chartData);
       
-      // Format array for TimesFM backend
       const valuesArray = chartData.map(d => d.value).filter(v => !isNaN(v));
       
       setStatus('Running TimesFM Predict & Anomaly Detection...');
       
-      const { forecast, anomalies } = await analyzeTimeSeries(valuesArray, 20); // predict 20 steps
+      const { forecast, anomalies } = await analyzeTimeSeries(valuesArray, 20);
       
-      // Create a completely new array to avoid mutating frozen state objects
       const chartDataWithAnomalies = chartData.map((item, idx) => ({
         ...item,
         is_anomaly: anomalies.includes(idx)
       }));
       
-      // Append predictions to chart data
-      const lastIndex = chartDataWithAnomalies.length > 0 ? Number(chartDataWithAnomalies[chartDataWithAnomalies.length - 1].index) : 0;
+      const lastPoint = chartDataWithAnomalies[chartDataWithAnomalies.length - 1];
+      const prevPoint = chartDataWithAnomalies[chartDataWithAnomalies.length - 2];
+      
+      let lastIndexNum = lastPoint ? Number(lastPoint.index) : 0;
+      let interval = 1;
+      
+      if (lastPoint && prevPoint) {
+        const lastVal = Number(lastPoint.index);
+        const prevVal = Number(prevPoint.index);
+        if (!isNaN(lastVal) && !isNaN(prevVal) && lastVal !== prevVal) {
+          interval = lastVal - prevVal;
+        }
+      }
       
       const predictionData: DataPoint[] = forecast.map((val, i) => ({
-        index: isNaN(lastIndex) ? `Pred ${i+1}` : lastIndex + i + 1,
+        index: isNaN(lastIndexNum) ? `Pred ${i+1}` : lastIndexNum + (interval * (i + 1)),
         value: val,
         is_prediction: true,
       }));
       
       setData([...chartDataWithAnomalies, ...predictionData]);
       setStatus('Complete');
-      setSelectionRange(null); // Reset selection on new data
+      setSelectionRange(null);
       
     } catch (error) {
       console.error(error);
@@ -114,12 +119,9 @@ function App() {
       );
       
       if (counterfactual) {
-        // Append counterfactual data to the existing data points
-        // starting from selectionRange[0]
         const newData = [...data];
         const startIdx = selectionRange[0];
         
-        // Mark counterfactual points
         const updatedData = newData.map((item, idx) => {
           const cfIdx = idx - startIdx;
           if (cfIdx >= 0 && cfIdx < counterfactual.length) {
@@ -139,10 +141,32 @@ function App() {
     }
   };
 
+  const clearCounterfactual = () => {
+    setData(prevData => prevData.map(item => {
+      const { counterfactual, ...rest } = item;
+      return rest;
+    }));
+    setStatus('Counterfactual Analysis Reset');
+  };
+
   const formatTime = (time: string | number) => {
-    if (typeof time === 'number') return time;
+    let dateInput: any = time;
+    
+    if (typeof time === 'number') {
+      const t = time;
+      if (t > 1e14) {
+        dateInput = t / 1000;
+      } else if (t > 1e11) {
+        dateInput = t;
+      } else if (t > 1e8) {
+        dateInput = t * 1000;
+      } else {
+        return time.toString();
+      }
+    }
+    
     try {
-      const date = new Date(time);
+      const date = new Date(dateInput);
       if (isNaN(date.getTime())) return time;
       return new Intl.DateTimeFormat('ja-JP', {
         timeZone: timezone,
@@ -194,17 +218,14 @@ function App() {
   const exportToCSV = () => {
     if (data.length === 0) return;
     
-    // Create CSV Header
     let csvContent = "TimeIndex,Value,IsAnomaly,IsPrediction\n";
     
-    // Append rows
     data.forEach((row) => {
       const isAnomaly = row.is_anomaly ? 'TRUE' : 'FALSE';
       const isPrediction = row.is_prediction ? 'TRUE' : 'FALSE';
       csvContent += `${row.index},${row.value},${isAnomaly},${isPrediction}\n`;
     });
     
-    // Create blob and trigger download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -242,7 +263,6 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail);
-      // The backend returns a raw CSV string in `csv` key
       handleDataInput(data.csv);
     } catch (e: any) {
       alert(`GCS Error: ${e.message}`);
@@ -263,7 +283,6 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail);
-      // The backend returns a raw CSV string in `csv` key
       handleDataInput(data.csv);
     } catch (e: any) {
       alert(`BigQuery Error: ${e.message}`);
@@ -272,9 +291,6 @@ function App() {
     }
   };
 
-  // Extract separate arrays for charting to handle different styles
-  // We'll just render it normally with Recharts using conditional properties
-  
   const handleChartMouseDown = (e: any) => {
     if (e && e.activeTooltipIndex !== undefined) {
       setRefAreaLeft(e.activeTooltipIndex);
@@ -294,7 +310,6 @@ function App() {
       const start = Math.min(left, right);
       const end = Math.max(left, right);
       
-      // Only select if it's within actual data (not prediction)
       const observedCount = data.filter(d => !d.is_prediction).length;
       if (start < observedCount) {
         setSelectionRange([start, Math.min(end, observedCount - 1)]);
@@ -455,11 +470,21 @@ function App() {
               <BarChart2 className="w-5 h-5 text-accent" />
               Analysis Results
             </h2>
-            {data.length > 0 && (
-              <button className="btn text-sm p-3 bg-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.2)] border border-[#334155]" onClick={exportToCSV}>
-                <Download className="w-4 h-4" /> Export CSV
-              </button>
-            )}
+            <div className="flex gap-2">
+              {data.some(d => d.counterfactual !== undefined) && (
+                <button 
+                  className="btn text-sm p-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center gap-2" 
+                  onClick={clearCounterfactual}
+                >
+                  <X className="w-4 h-4" /> Clear Effect
+                </button>
+              )}
+              {data.length > 0 && (
+                <button className="btn text-sm p-3 bg-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.2)] border border-[#334155] flex items-center gap-2" onClick={exportToCSV}>
+                  <Download className="w-4 h-4" /> Export CSV
+                </button>
+              )}
+            </div>
           </div>
           
           {data.length > 0 ? (
@@ -526,7 +551,6 @@ function App() {
                   
                   {/* Selection Highlight */}
                   {(refAreaLeft !== null && refAreaRight !== null) && (
-                    /* @ts-ignore - Recharts internal components sometimes have tricky types */
                     <ReferenceArea
                       x1={data[Number(refAreaLeft)]?.index}
                       x2={data[Number(refAreaRight)]?.index}
@@ -536,7 +560,6 @@ function App() {
                   )}
                   
                   {selectionRange && (
-                    /* @ts-ignore */
                     <ReferenceArea
                       x1={data[selectionRange[0]]?.index}
                       x2={data[selectionRange[1]]?.index}
@@ -547,7 +570,6 @@ function App() {
                     />
                   )}
                   
-                  {/* Actual Data Line */}
                   <Line 
                     type="monotone" 
                     dataKey={(d) => d.is_prediction ? null : d.value} 
@@ -558,7 +580,6 @@ function App() {
                     connectNulls
                   />
                   
-                  {/* Prediction Line */}
                   <Line 
                     type="monotone" 
                     dataKey={(d) => d.is_prediction ? d.value : null} 
@@ -570,14 +591,12 @@ function App() {
                     connectNulls
                   />
                   
-                  {/* Anomalies Scatter */}
                   <Scatter 
                     dataKey={(d) => d.is_anomaly ? d.value : null} 
                     fill="#ef4444" 
                     name="Anomaly"
                   />
 
-                  {/* Counterfactual Line */}
                   <Line 
                     type="monotone" 
                     dataKey="counterfactual" 
