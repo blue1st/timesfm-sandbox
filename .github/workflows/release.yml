@@ -18,7 +18,7 @@ jobs:
         include:
           - os: macos-14
             arch: arm64
-          - os: macos-13
+          - os: macos-14
             arch: x64
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
 
       - name: Build Python backend
         run: |
-          python -m PyInstaller --name server --onefile --distpath build-python/backend backend/server.py
+          python -m PyInstaller --name server --onefile --target-architecture ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }} --distpath build-python/backend backend/server.py
 
       - name: build and release
         env:
