@@ -1,73 +1,39 @@
-# React + TypeScript + Vite
+# TimesFM Sandbox
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+TimesFMベースの時系列予測を行うためのSandbox環境を提供するmacOS向けデスクトップアプリケーションです。
 
-Currently, two official plugins are available:
+## インストール方法
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### Homebrew経由でのインストール（推奨）
+Homebrewを使用することで、簡単にインストールおよびアップデート管理が可能です。
 
-## React Compiler
+```bash
+# カスタムtapを追加（初回のみ）してインストールする場合
+brew tap blue1st/homebrew-taps
+brew install --cask timesfm-sandbox
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# または、1行で直接インストールする場合
+brew install --cask blue1st/homebrew-taps/timesfm-sandbox
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+※ 本アプリは現在Appleの公証（Notarization）を取得していませんが、Cask経由でインストールした場合は自動で実行可能になるよう設定されているため、そのまま開くことができます。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 開発に関する情報
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### ローカルでの起動
+
+```bash
+npm install
+npm run dev
 ```
+
+### 今後のリリース運用について
+
+本リポジトリではCI（GitHub Actions）と `release-it` を用いた自動リリースフローを構成しています。新しいリリースを切る際は、以下のコマンドを実行してください。
+
+```bash
+npm run release
+```
+
+これを実行すると、対話式でバージョンアップの選択（patch / minor / major）が行われ、Gitタグの作成とPushまでが一括で行われます。  
+GitHubに `v1.x.x` のようなタグがPushされると、GitHub Actions のプロセスが自動的に立ち上がり、**macOS向けバイナリのビルド・GitHub Releasesへのアップロード・HomebrewのCaskファイルの更新** のすべてが自動進行します。
