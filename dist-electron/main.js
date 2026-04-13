@@ -28,8 +28,8 @@ function startPythonBackend() {
 }
 function createWindow() {
 	win = new BrowserWindow({
-		width: 1200,
-		height: 800,
+		width: 1400,
+		height: 1e3,
 		icon: path.join(process.env.VITE_PUBLIC, "vite.svg"),
 		webPreferences: {
 			preload: path.join(__dirname, "preload.mjs"),
