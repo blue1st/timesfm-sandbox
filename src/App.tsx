@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key, X } from 'lucide-react';
+import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key, X, Trash2 } from 'lucide-react';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea, Area
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea, Area
 } from 'recharts';
 
 import { processCSV } from './lib/duckdb';
@@ -29,6 +29,12 @@ function App() {
   const [bqQuery, setBqQuery] = useState('SELECT *\nFROM `bigquery-public-data.covid19_open_data.covid19_open_data`\nLIMIT 100');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   
+  // Data columns state
+  const [rawRows, setRawRows] = useState<any[]>([]);
+  const [availableColumns, setAvailableColumns] = useState<string[]>([]);
+  const [selectedTimeCol, setSelectedTimeCol] = useState<string>('');
+  const [selectedValueCol, setSelectedValueCol] = useState<string>('');
+  
   // Selection & Timezone states
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [refAreaLeft, setRefAreaLeft] = useState<number | string | null>(null);
@@ -36,25 +42,15 @@ function App() {
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
   const [isCounterfactualLoading, setIsCounterfactualLoading] = useState(false);
   
-  const handleDataInput = async (content: string) => {
+  const runAnalysis = async (rows: any[], timeCol: string, valCol: string) => {
     try {
+      if (!valCol || !rows || rows.length === 0) return;
+      
       setIsProcessing(true);
-      setStatus('Loading DuckDB & parsing data...');
-      
-      const rows = await processCSV('input.csv', content);
-      
-      if (rows.length === 0) {
-        throw new Error("No data found");
-      }
-      
-      const keys = Object.keys(rows[0]);
-      const valCol = keys.length > 1 ? keys[1] : keys[0];
-      const timeCol = keys.length > 1 ? keys[0] : null;
-      
       setStatus('Detecting anomalies...');
       
       const chartData: DataPoint[] = rows.map((row, i) => ({
-        index: timeCol ? row[timeCol] : (row._index ?? i),
+        index: (timeCol && row[timeCol] !== undefined) ? row[timeCol] : (row._index ?? i),
         value: Number(row[valCol]),
         is_anomaly: false
       }));
@@ -100,6 +96,59 @@ function App() {
       console.error(error);
       setStatus(`Error: ${(error as Error).message}`);
     } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const resetData = () => {
+    setRawRows([]);
+    setAvailableColumns([]);
+    setData([]);
+    setSelectedTimeCol('');
+    setSelectedValueCol('');
+    setSelectionRange(null);
+    setStatus('Idle');
+    setPastedText('');
+  };
+
+  const handleDataInput = async (content: string) => {
+    try {
+      setIsProcessing(true);
+      setStatus('Loading DuckDB & parsing data...');
+      
+      const newRows = await processCSV(`input_${Date.now()}.csv`, content);
+      
+      if (newRows.length === 0) {
+        throw new Error("No data found");
+      }
+      
+      const newKeys = Object.keys(newRows[0]).filter(k => k !== '_index');
+      
+      let combinedRows;
+      let updatedColumns;
+      let timeColToUse = selectedTimeCol;
+      let valColToUse = selectedValueCol;
+      
+      if (rawRows.length > 0) {
+        combinedRows = [...rawRows, ...newRows];
+        updatedColumns = Array.from(new Set([...availableColumns, ...newKeys]));
+      } else {
+        combinedRows = newRows;
+        updatedColumns = newKeys;
+        timeColToUse = updatedColumns.length > 1 ? updatedColumns[0] : '';
+        valColToUse = updatedColumns.length > 1 ? updatedColumns[1] : updatedColumns[0];
+      }
+      
+      setAvailableColumns(updatedColumns);
+      setRawRows(combinedRows);
+      setSelectedTimeCol(timeColToUse);
+      setSelectedValueCol(valColToUse);
+      
+      await runAnalysis(combinedRows, timeColToUse, valColToUse);
+      
+    } catch (error) {
+      console.error(error);
+      setStatus(`Error: ${(error as Error).message}`);
       setIsProcessing(false);
     }
   };
@@ -458,11 +507,66 @@ function App() {
               </div>
             )}
             
+            {availableColumns.length > 0 && (
+              <div className="mt-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700 fade-in">
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Database className="w-4 h-4 text-accent" /> Column Mapping</h3>
+                
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Time Axis (X)</label>
+                    <select 
+                      className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
+                      value={selectedTimeCol}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedTimeCol(val);
+                        runAnalysis(rawRows, val, selectedValueCol);
+                      }}
+                      disabled={isProcessing}
+                    >
+                      <option value="">(Auto Index)</option>
+                      {availableColumns.map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Value (Y)</label>
+                    <select 
+                      className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
+                      value={selectedValueCol}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedValueCol(val);
+                        runAnalysis(rawRows, selectedTimeCol, val);
+                      }}
+                      disabled={isProcessing}
+                    >
+                      {availableColumns.map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {rawRows.length > 0 && (
+              <button 
+                className="btn w-full mt-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 flex justify-center items-center gap-2"
+                onClick={resetData}
+                disabled={isProcessing}
+              >
+                <Trash2 className="w-4 h-4" /> Reset All Data
+              </button>
+            )}
+            
             <div className="mt-4 text-xs text-[#94a3b8] p-3 rounded bg-[rgba(0,0,0,0.2)] border border-[#334155]">
               <p className="font-semibold mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Powered by:</p>
               <ul className="list-disc pl-4 space-y-1">
                 <li>DuckDB WASM (Anomaly Detection)</li>
-                <li>Transformers.js (TimesFM Simulation)</li>
+                <li>TimesFM Python Backend (Forecasting)</li>
               </ul>
             </div>
           </div>
@@ -532,7 +636,7 @@ function App() {
               </div>
 
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
+                <ComposedChart
                   data={data.map((d, i) => {
                     const isLastObserved = !d.is_prediction && data[i + 1]?.is_prediction;
                     return {
@@ -632,7 +736,7 @@ function App() {
                     name="Prediction Interval (80%)"
                     connectNulls
                   />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
               
               <div className="flex gap-4 mt-4 text-sm justify-center flex-wrap">
@@ -645,7 +749,7 @@ function App() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-[#94a3b8]">
-              <LineChart className="w-16 h-16 opacity-20 mb-4" />
+              <BarChart2 className="w-16 h-16 opacity-20 mb-4" />
               <p>Upload or paste data to view analysis</p>
             </div>
           )}
