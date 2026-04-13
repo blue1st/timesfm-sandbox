@@ -1,0 +1,59 @@
+name: "Release"
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish-release:
+    permissions:
+      contents: write
+      pull-requests: write
+      repository-projects: write
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: install dependencies
+        run: npm install
+
+      - name: build and release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac -p always
+
+  update-tap:
+    needs: publish-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts from release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          gh release download v$VERSION --pattern "*.dmg" --dir .
+          ls -R
+
+      - name: Update Homebrew Tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -d "scripts" ] && [ -f "scripts/update-homebrew.sh" ]; then
+            chmod +x scripts/update-homebrew.sh
+            ./scripts/update-homebrew.sh
+          else
+            echo "Warning: scripts/update-homebrew.sh not found."
+          fi
