@@ -36,7 +36,8 @@ jobs:
           npm version $VERSION_NUM --no-git-tag-version --allow-same-version
 
       - name: install dependencies
-        run: npm install
+        run: |
+          for i in 1 2 3 4 5; do npm install && break || sleep 15; done
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -55,7 +56,8 @@ jobs:
       - name: build and release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist -- --mac --${{ matrix.arch }} -p always
+        run: |
+          for i in 1 2 3; do npm run dist -- --mac --${{ matrix.arch }} -p always && break || sleep 15; done
 
   update-tap:
     needs: publish-release
