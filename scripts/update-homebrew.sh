@@ -44,13 +44,12 @@ CASK_FILE="$TMP_DIR/Casks/${CASK_NAME}.rb"
 # Create or update the Cask file
 cat <<EOF > "$CASK_FILE"
 cask "${CASK_NAME}" do
-  arch arm: "arm64", intel: "mac"
-
+  arch arm: "-arm64", intel: ""
   version "${VERSION}"
   sha256 arm:   "${SHA256_ARM}",
          intel: "${SHA256_X64}"
 
-  url "https://github.com/blue1st/timesfm-sandbox/releases/download/v#{version}/TimesFM.Sandbox-#{version}-#{arch}.dmg"
+  url "https://github.com/blue1st/timesfm-sandbox/releases/download/v#{version}/TimesFM-Sandbox-#{version}#{arch}.dmg"
   name "TimesFM Sandbox"
   desc "Time-Series Forecasting Sandbox based on TimesFM"
   homepage "https://github.com/blue1st/timesfm-sandbox"
