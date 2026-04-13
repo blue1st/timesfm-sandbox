@@ -12,7 +12,14 @@ jobs:
       contents: write
       pull-requests: write
       repository-projects: write
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x64
     steps:
       - uses: actions/checkout@v4
 
@@ -31,10 +38,24 @@ jobs:
       - name: install dependencies
         run: npm install
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python backend
+        run: |
+          python -m PyInstaller --name server --onefile --distpath build-python/backend backend/server.py
+
       - name: build and release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist -- --mac -p always
+        run: npm run dist -- --mac --${{ matrix.arch }} -p always
 
   update-tap:
     needs: publish-release

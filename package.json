@@ -17,14 +17,19 @@
     "productName": "TimesFM Sandbox",
     "mac": {
       "target": {
-        "target": "default",
-        "arch": [
-          "x64",
-          "arm64"
-        ]
+        "target": "default"
       },
       "icon": "build/icon.png"
     },
+    "extraResources": [
+      {
+        "from": "build-python/backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "directories": {
       "output": "release",
       "buildResources": "build"

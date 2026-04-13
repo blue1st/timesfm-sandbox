@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key, X } from 'lucide-react';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea, Area
 } from 'recharts';
 
 import { processCSV } from './lib/duckdb';
@@ -13,6 +13,8 @@ interface DataPoint {
   value: number;
   is_anomaly?: boolean;
   is_prediction?: boolean;
+  low?: number;
+  high?: number;
   counterfactual?: number;
 }
 
@@ -61,9 +63,7 @@ function App() {
       
       const valuesArray = chartData.map(d => d.value).filter(v => !isNaN(v));
       
-      setStatus('Running TimesFM Predict & Anomaly Detection...');
-      
-      const { forecast, anomalies } = await analyzeTimeSeries(valuesArray, 20);
+      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, 20);
       
       const chartDataWithAnomalies = chartData.map((item, idx) => ({
         ...item,
@@ -88,6 +88,8 @@ function App() {
         index: isNaN(lastIndexNum) ? `Pred ${i+1}` : lastIndexNum + (interval * (i + 1)),
         value: val,
         is_prediction: true,
+        low: low ? low[i] : undefined,
+        high: high ? high[i] : undefined,
       }));
       
       setData([...chartDataWithAnomalies, ...predictionData]);
@@ -609,12 +611,23 @@ function App() {
                     name="No-Event Counterfactual"
                     connectNulls
                   />
+
+                  <Area
+                    type="monotone"
+                    dataKey={(d) => d.is_prediction ? [d.low, d.high] : null}
+                    stroke="none"
+                    fill="#8b5cf6"
+                    fillOpacity={0.15}
+                    name="Prediction Interval (80%)"
+                    connectNulls
+                  />
                 </LineChart>
               </ResponsiveContainer>
               
               <div className="flex gap-4 mt-4 text-sm justify-center flex-wrap">
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Actual</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500 border border-violet-500" style={{ borderStyle: 'dotted' }}></div> Forecast</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-violet-500/30"></div> Interval (80%)</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500"></div> Anomaly</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-dashed border-emerald-500 bg-transparent"></div> Counterfactual</div>
               </div>

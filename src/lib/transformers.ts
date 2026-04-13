@@ -2,7 +2,7 @@ export async function analyzeTimeSeries(
   data: number[], 
   forecastLength: number = 20, 
   excludeRange?: [number, number]
-): Promise<{forecast: number[], anomalies: number[], counterfactual?: number[]}> {
+): Promise<{forecast: number[], anomalies: number[], low?: number[], high?: number[], counterfactual?: number[]}> {
   console.log("Requesting TimesFM analysis from Python Backend...");
   
   try {
@@ -27,6 +27,8 @@ export async function analyzeTimeSeries(
     return { 
       forecast: result.forecast, 
       anomalies: result.anomalies,
+      low: result.low,
+      high: result.high,
       counterfactual: result.counterfactual 
     };
   } catch (err) {

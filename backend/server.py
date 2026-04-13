@@ -31,6 +31,8 @@ class PredictRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     forecast: List[float]
     anomalies: List[int]
+    low: List[float] = None # 10th percentile
+    high: List[float] = None # 90th percentile
     counterfactual: List[float] = None # Counterfactual values for the entire range (if exclude_range provided)
 
 @app.on_event("startup")
@@ -67,8 +69,13 @@ def analyze(req: PredictRequest):
         
         if tfm is not None:
             # 1. Normal Forecast
-            forecast, _ = tfm.forecast([req.data], freq=[0])
+            forecast, full_forecast = tfm.forecast([req.data], freq=[0])
             response_dict["forecast"] = forecast[0][:req.forecast_length].tolist()
+            
+            # Extract 10th and 90th percentiles
+            # full_forecast index: 0=mean, 1=0.1, ..., 9=0.9
+            response_dict["low"] = full_forecast[0, :req.forecast_length, 1].tolist()
+            response_dict["high"] = full_forecast[0, :req.forecast_length, 9].tolist()
             
             # 2. Counterfactual Estimation (if exclude_range provided)
             if req.exclude_range and len(req.exclude_range) == 2:
@@ -117,6 +124,8 @@ def analyze(req: PredictRequest):
             current_mean = sum(window) / len(window)
             forecast_out = [current_mean + (i * 0.1) for i in range(req.forecast_length)]
             response_dict["forecast"] = forecast_out
+            response_dict["low"] = [f - 0.5 for f in forecast_out]
+            response_dict["high"] = [f + 0.5 for f in forecast_out]
             response_dict["anomalies"] = [len(req.data)-2] if len(req.data)>2 else []
             
             if req.exclude_range:
