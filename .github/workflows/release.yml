@@ -61,6 +61,8 @@ jobs:
           enable-plugins: numpy,torch
           include-package: pandas,timesfm
           output-dir: build-python/backend
+          lto: "no"
+          jobs: 3
 
       - name: build and release
         env:
