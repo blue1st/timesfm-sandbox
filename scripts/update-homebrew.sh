@@ -16,7 +16,7 @@ echo "Updating Homebrew Cask to version $VERSION"
 
 # We expect DMGs to be downloaded into a directory or current dir
 DMG_ARM=$(find . -name "*-arm64.dmg" -o -name "*_arm64.dmg" -o -name "*_aarch64.dmg" | head -n 1)
-DMG_X64=$(find . -type f -name "*.dmg" | grep -v 'arm' | grep -v 'aarch64' | head -n 1)
+DMG_X64=$(find . -name "*-x64.dmg" -o -name "*_x64.dmg" | head -n 1)
 
 if [ -z "$DMG_ARM" ] || [ -z "$DMG_X64" ]; then
   echo "Error: Could not find both arm64 and x64 DMG files"
@@ -44,7 +44,7 @@ CASK_FILE="$TMP_DIR/Casks/${CASK_NAME}.rb"
 # Create or update the Cask file
 cat <<EOF > "$CASK_FILE"
 cask "${CASK_NAME}" do
-  arch arm: "-arm64", intel: ""
+  arch arm: "-arm64", intel: "-x64"
   version "${VERSION}"
   sha256 arm:   "${SHA256_ARM}",
          intel: "${SHA256_X64}"

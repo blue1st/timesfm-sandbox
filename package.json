@@ -19,7 +19,8 @@
       "target": {
         "target": "default"
       },
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "extraResources": [
       {
