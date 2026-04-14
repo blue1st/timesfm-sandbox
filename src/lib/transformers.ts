@@ -5,8 +5,9 @@ export async function analyzeTimeSeries(
 ): Promise<{forecast: number[], anomalies: number[], low?: number[], high?: number[], counterfactual?: number[]}> {
   console.log("Requesting TimesFM analysis from Python Backend...");
   
+  let response;
   try {
-    const response = await fetch('http://127.0.0.1:8000/analyze', {
+    response = await fetch('http://127.0.0.1:8000/analyze', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -17,22 +18,26 @@ export async function analyzeTimeSeries(
         exclude_range: excludeRange
       }),
     });
-    
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`API Error: ${errorData.detail || response.statusText}`);
-    }
-    
-    const result = await response.json();
-    return { 
-      forecast: result.forecast, 
-      anomalies: result.anomalies,
-      low: result.low,
-      high: result.high,
-      counterfactual: result.counterfactual 
-    };
   } catch (err) {
     console.error("Failed to connect to Python backend:", err);
-    throw new Error("Cannot connect to TimesFM background service. Ensure the python server is running.");
+    throw new Error("バックエンドサーバーに接続できません。起動状態を確認してください。");
   }
+
+  if (!response.ok) {
+    let errorDetail = response.statusText;
+    try {
+      const errorData = await response.json();
+      if (errorData.detail) errorDetail = typeof errorData.detail === 'string' ? errorData.detail : JSON.stringify(errorData.detail);
+    } catch (e) {}
+    throw new Error(errorDetail);
+  }
+  
+  const result = await response.json();
+  return { 
+    forecast: result.forecast, 
+    anomalies: result.anomalies,
+    low: result.low,
+    high: result.high,
+    counterfactual: result.counterfactual 
+  };
 }
