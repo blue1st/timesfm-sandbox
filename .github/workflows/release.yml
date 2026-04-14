@@ -51,11 +51,16 @@ jobs:
         run: |
           pip install "numpy<2"
           pip install -r backend/requirements.txt
-          pip install Nuitka
 
       - name: Build Python backend
-        run: |
-          python -m nuitka --standalone --plugin-enable=numpy --plugin-enable=torch --include-package=pandas --include-package=timesfm --output-dir=build-python/backend backend/server.py
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          nuitka-version: main
+          script-name: backend/server.py
+          standalone: true
+          enable-plugins: numpy,torch
+          include-package: pandas,timesfm
+          output-dir: build-python/backend
 
       - name: build and release
         env:
