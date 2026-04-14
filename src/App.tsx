@@ -17,6 +17,7 @@ interface DataPoint {
   high?: number;
   counterfactual?: number;
   event_name?: string;
+  is_prediction?: boolean;
 }
 
 function App() {
