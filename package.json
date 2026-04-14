@@ -23,7 +23,7 @@
     },
     "extraResources": [
       {
-        "from": "build-python/backend/server",
+        "from": "build-python/backend/server.dist",
         "to": "backend",
         "filter": [
           "**/*"
