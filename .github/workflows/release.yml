@@ -55,7 +55,7 @@ jobs:
 
       - name: Build Python backend
         run: |
-          python -m PyInstaller --name server --onefile --target-architecture ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }} --hidden-import numpy --collect-all numpy --collect-all pandas --collect-all timesfm --distpath build-python/backend backend/server.py
+          python -m PyInstaller --name server --onedir --target-architecture ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }} --hidden-import numpy --collect-all numpy --collect-all pandas --collect-all timesfm --distpath build-python/backend backend/server.py
 
       - name: build and release
         env:
