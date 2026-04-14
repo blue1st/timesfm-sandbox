@@ -57,7 +57,7 @@ jobs:
         with:
           nuitka-version: main
           script-name: backend/server.py
-          standalone: true
+          mode: standalone
           enable-plugins: numpy,torch
           include-package: pandas,timesfm
           output-dir: build-python/backend
