@@ -64,6 +64,11 @@ jobs:
           lto: "no"
           jobs: 3
 
+      - name: Remove broken symlinks from Nuitka build
+        run: |
+          find build-python/backend -type l ! -exec test -e {} \; -delete || true
+          echo "Cleaned broken symlinks from build output"
+
       - name: build and release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
