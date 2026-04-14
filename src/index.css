@@ -59,10 +59,12 @@ body {
 .app-container {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.5rem;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Header */
@@ -94,8 +96,10 @@ h1 {
 /* Layout */
 .main-grid {
   display: grid;
-  grid-template-columns: 350px 1fr;
-  gap: 2rem;
+  grid-template-columns: 360px 1fr;
+  gap: 1.5rem;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Side Panel */
@@ -103,6 +107,7 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-height: 0;
 }
 
 .input-section {
@@ -110,6 +115,8 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  overflow-y: auto;
+  height: 100%;
 }
 
 .input-section h2 {
@@ -200,7 +207,9 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  min-height: 500px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .chart-header {
@@ -208,6 +217,7 @@ textarea:focus {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 
 .chart-title {

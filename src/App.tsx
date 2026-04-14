@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import packageJson from '../package.json';
 import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key, X, Trash2 } from 'lucide-react';
 import { 
-  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea, Area
+  ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea, Area, ReferenceLine
 } from 'recharts';
 
 import { processCSV } from './lib/duckdb';
@@ -12,10 +13,10 @@ interface DataPoint {
   index: number | string;
   value: number;
   is_anomaly?: boolean;
-  is_prediction?: boolean;
   low?: number;
   high?: number;
   counterfactual?: number;
+  event_name?: string;
 }
 
 function App() {
@@ -34,6 +35,7 @@ function App() {
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [selectedTimeCol, setSelectedTimeCol] = useState<string>('');
   const [selectedValueCol, setSelectedValueCol] = useState<string>('');
+  const [selectedEventCol, setSelectedEventCol] = useState<string>('');
   
   // Selection & Timezone states
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -41,19 +43,33 @@ function App() {
   const [refAreaRight, setRefAreaRight] = useState<number | string | null>(null);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
   const [isCounterfactualLoading, setIsCounterfactualLoading] = useState(false);
+  const [eventNameInput, setEventNameInput] = useState('');
+  const [eventStartInput, setEventStartInput] = useState('');
+  const [eventEndInput, setEventEndInput] = useState('');
   
-  const runAnalysis = async (rows: any[], timeCol: string, valCol: string) => {
+  useEffect(() => {
+    document.title = `TimesFM Sandbox v${packageJson.version}`;
+  }, []);
+  
+  const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '') => {
     try {
       if (!valCol || !rows || rows.length === 0) return;
       
       setIsProcessing(true);
       setStatus('Detecting anomalies...');
       
-      const chartData: DataPoint[] = rows.map((row, i) => ({
-        index: (timeCol && row[timeCol] !== undefined) ? row[timeCol] : (row._index ?? i),
-        value: Number(row[valCol]),
-        is_anomaly: false
-      }));
+      const chartData: DataPoint[] = rows.map((row, i) => {
+        let event_name = undefined;
+        if (eventCol && row[eventCol] !== undefined && row[eventCol] !== null && row[eventCol] !== '') {
+          event_name = String(row[eventCol]).trim();
+        }
+        return {
+          index: (timeCol && row[timeCol] !== undefined) ? row[timeCol] : (row._index ?? i),
+          value: Number(row[valCol]),
+          is_anomaly: false,
+          event_name
+        };
+      });
       
       setData(chartData);
       
@@ -106,6 +122,7 @@ function App() {
     setData([]);
     setSelectedTimeCol('');
     setSelectedValueCol('');
+    setSelectedEventCol('');
     setSelectionRange(null);
     setStatus('Idle');
     setPastedText('');
@@ -128,6 +145,7 @@ function App() {
       let updatedColumns;
       let timeColToUse = selectedTimeCol;
       let valColToUse = selectedValueCol;
+      let eventColToUse = selectedEventCol;
       
       if (rawRows.length > 0) {
         combinedRows = [...rawRows, ...newRows];
@@ -143,8 +161,9 @@ function App() {
       setRawRows(combinedRows);
       setSelectedTimeCol(timeColToUse);
       setSelectedValueCol(valColToUse);
+      setSelectedEventCol(eventColToUse);
       
-      await runAnalysis(combinedRows, timeColToUse, valColToUse);
+      await runAnalysis(combinedRows, timeColToUse, valColToUse, eventColToUse);
       
     } catch (error) {
       console.error(error);
@@ -271,12 +290,15 @@ function App() {
   const exportToCSV = () => {
     if (data.length === 0) return;
     
-    let csvContent = "TimeIndex,Value,IsAnomaly,IsPrediction\n";
+    let csvContent = "TimeIndex,Value,IsAnomaly,IsPrediction,Low,High,EventName\n";
     
     data.forEach((row) => {
       const isAnomaly = row.is_anomaly ? 'TRUE' : 'FALSE';
       const isPrediction = row.is_prediction ? 'TRUE' : 'FALSE';
-      csvContent += `${row.index},${row.value},${isAnomaly},${isPrediction}\n`;
+      const low = row.low !== undefined ? row.low : '';
+      const high = row.high !== undefined ? row.high : '';
+      const eventName = row.event_name ? `"${row.event_name.replace(/"/g, '""')}"` : '';
+      csvContent += `${row.index},${row.value},${isAnomaly},${isPrediction},${low},${high},${eventName}\n`;
     });
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -357,9 +379,9 @@ function App() {
   };
 
   const handleChartMouseUp = () => {
-    if (refAreaLeft !== null && refAreaRight !== null) {
+    if (refAreaLeft !== null) {
       const left = Number(refAreaLeft);
-      const right = Number(refAreaRight);
+      const right = refAreaRight !== null ? Number(refAreaRight) : left;
       const start = Math.min(left, right);
       const end = Math.max(left, right);
       
@@ -371,11 +393,36 @@ function App() {
     setRefAreaLeft(null);
     setRefAreaRight(null);
   };
+
+  // Group events for charting
+  const eventAreas: { name: string, start: any, end: any }[] = [];
+  let currentEvent: { name: string, start: any, end: any } | null = null;
   
+  data.forEach((d) => {
+    if (d.event_name) {
+      if (!currentEvent || currentEvent.name !== d.event_name) {
+        if (currentEvent) eventAreas.push(currentEvent);
+        currentEvent = { name: d.event_name, start: d.index, end: d.index };
+      } else {
+        currentEvent.end = d.index;
+      }
+    } else {
+      if (currentEvent) {
+        eventAreas.push(currentEvent);
+        currentEvent = null;
+      }
+    }
+  });
+  if (currentEvent) eventAreas.push(currentEvent);
+
   return (
     <div className="app-container">
       <header>
-        <h1><Activity className="w-8 h-8 text-primary" /> TimesFM Sandbox</h1>
+        <h1>
+          <Activity className="w-8 h-8 text-primary" /> 
+          TimesFM Sandbox 
+          <span className="text-sm text-slate-500 font-medium ml-2 relative top-1">v{packageJson.version}</span>
+        </h1>
         <div className={`status-badge ${isProcessing ? 'processing' : status === 'Complete' ? 'active' : ''}`}>
           <div className="status-indicator"></div>
           {status}
@@ -520,7 +567,7 @@ function App() {
                       onChange={(e) => {
                         const val = e.target.value;
                         setSelectedTimeCol(val);
-                        runAnalysis(rawRows, val, selectedValueCol);
+                        runAnalysis(rawRows, val, selectedValueCol, selectedEventCol);
                       }}
                       disabled={isProcessing}
                     >
@@ -539,7 +586,7 @@ function App() {
                       onChange={(e) => {
                         const val = e.target.value;
                         setSelectedValueCol(val);
-                        runAnalysis(rawRows, selectedTimeCol, val);
+                        runAnalysis(rawRows, selectedTimeCol, val, selectedEventCol);
                       }}
                       disabled={isProcessing}
                     >
@@ -547,6 +594,128 @@ function App() {
                         <option key={col} value={col}>{col}</option>
                       ))}
                     </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Event Marker Column (Optional)</label>
+                    <select 
+                      className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
+                      value={selectedEventCol}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedEventCol(val);
+                        runAnalysis(rawRows, selectedTimeCol, selectedValueCol, val);
+                      }}
+                      disabled={isProcessing}
+                    >
+                      <option value="">(None)</option>
+                      {availableColumns.map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {data.length > 0 && (
+              <div className="mt-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700 fade-in">
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Manual Event Labeling</h3>
+                <div className="flex flex-col gap-2 p-3 bg-slate-900 rounded border border-slate-700">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Start Time</label>
+                      <select 
+                        className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500"
+                        value={eventStartInput}
+                        onChange={(e) => setEventStartInput(e.target.value)}
+                      >
+                        <option value="">-- Select Start --</option>
+                        {data.map((d, i) => (
+                           <option key={`start-${i}`} value={String(d.index)}>{formatTime(d.index)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">End Time (Optional)</label>
+                      <select 
+                        className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500"
+                        value={eventEndInput}
+                        onChange={(e) => setEventEndInput(e.target.value)}
+                      >
+                        <option value="">-- Same as Start --</option>
+                        {data.map((d, i) => (
+                           <option key={`end-${i}`} value={String(d.index)}>{formatTime(d.index)}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Event Name</label>
+                    <input 
+                      type="text" 
+                      className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500"
+                      placeholder="Name of the event"
+                      value={eventNameInput}
+                      onChange={(e) => setEventNameInput(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <button 
+                      className="flex-1 btn text-xs py-1 px-2 bg-amber-600 hover:bg-amber-500 text-white flex justify-center items-center"
+                      onClick={() => {
+                        const startStr = eventStartInput.trim();
+                        if (!startStr || !eventNameInput.trim()) return;
+                        
+                        const endStr = eventEndInput.trim() || startStr;
+                        const startIdx = data.findIndex(d => String(d.index) === startStr);
+                        const endIdx = data.findIndex(d => String(d.index) === endStr);
+                        
+                        if (startIdx === -1) {
+                          alert(`Index "${startStr}" not found in data.`);
+                          return;
+                        }
+                        
+                        const actualStart = endIdx !== -1 ? Math.min(startIdx, endIdx) : startIdx;
+                        const actualEnd = endIdx !== -1 ? Math.max(startIdx, endIdx) : startIdx;
+                        
+                        setData(prev => prev.map((d, i) => {
+                          if (i >= actualStart && i <= actualEnd) {
+                            return { ...d, event_name: eventNameInput.trim() };
+                          }
+                          return d;
+                        }));
+                      }}
+                      disabled={!eventNameInput.trim() || !eventStartInput.trim()}
+                    >
+                      Set Event
+                    </button>
+                    <button 
+                      className="flex-1 btn text-xs py-1 px-2 bg-slate-700 hover:bg-slate-600 text-slate-300 flex justify-center items-center"
+                      onClick={() => {
+                        const startStr = eventStartInput.trim();
+                        if (!startStr) return;
+                        
+                        const endStr = eventEndInput.trim() || startStr;
+                        const startIdx = data.findIndex(d => String(d.index) === startStr);
+                        const endIdx = data.findIndex(d => String(d.index) === endStr);
+                        
+                        if (startIdx === -1) return;
+                        const actualStart = endIdx !== -1 ? Math.min(startIdx, endIdx) : startIdx;
+                        const actualEnd = endIdx !== -1 ? Math.max(startIdx, endIdx) : startIdx;
+                        
+                        setData(prev => prev.map((d, i) => {
+                          if (i >= actualStart && i <= actualEnd) {
+                            const { event_name, ...rest } = d;
+                            return rest;
+                          }
+                          return d;
+                        }));
+                      }}
+                      disabled={!eventStartInput.trim()}
+                    >
+                      Clear Target Event
+                    </button>
                   </div>
                 </div>
               </div>
@@ -565,8 +734,8 @@ function App() {
             <div className="mt-4 text-xs text-[#94a3b8] p-3 rounded bg-[rgba(0,0,0,0.2)] border border-[#334155]">
               <p className="font-semibold mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Powered by:</p>
               <ul className="list-disc pl-4 space-y-1">
-                <li>DuckDB WASM (Anomaly Detection)</li>
-                <li>TimesFM Python Backend (Forecasting)</li>
+                <li>DuckDB WASM (Data Processing & Ingestion)</li>
+                <li>TimesFM Python Backend (Forecasting & Anomaly Detection)</li>
               </ul>
             </div>
           </div>
@@ -581,14 +750,14 @@ function App() {
             <div className="flex gap-2">
               {data.some(d => d.counterfactual !== undefined) && (
                 <button 
-                  className="btn text-sm p-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center gap-2" 
+                  className="btn text-sm px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center gap-2" 
                   onClick={clearCounterfactual}
                 >
                   <X className="w-4 h-4" /> Clear Effect
                 </button>
               )}
               {data.length > 0 && (
-                <button className="btn text-sm p-3 bg-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.2)] border border-[#334155] flex items-center gap-2" onClick={exportToCSV}>
+                <button className="btn text-sm px-3 py-1.5 bg-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.2)] border border-[#334155] flex items-center gap-2" onClick={exportToCSV}>
                   <Download className="w-4 h-4" /> Export CSV
                 </button>
               )}
@@ -596,8 +765,8 @@ function App() {
           </div>
           
           {data.length > 0 ? (
-            <div className="h-full w-full min-h-[400px]" style={{ flex: 1 }}>
-              <div className="flex justify-between items-center mb-4">
+            <div className="w-full flex flex-col flex-1" style={{ minHeight: 0 }}>
+              <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex gap-4 items-center">
                   <div className="text-sm font-medium text-slate-400">Timezone:</div>
                   <select 
@@ -616,20 +785,21 @@ function App() {
                 {selectionRange && (
                   <div className="flex gap-2 items-center fade-in">
                     <span className="text-xs text-slate-400">
-                      Selected: Index {selectionRange[0]} - {selectionRange[1]}
+                      Selected: Index {selectionRange[0]}{selectionRange[0] !== selectionRange[1] ? ` - ${selectionRange[1]}` : ''}
                     </span>
                     <button 
-                      className="btn btn-primary text-xs py-1 px-3"
+                      className="btn btn-primary text-xs py-1 px-3 flex items-center gap-1"
                       onClick={runCounterfactual}
                       disabled={isCounterfactualLoading}
                     >
                       <Sparkles className="w-3 h-3" /> Estimate Effect
                     </button>
                     <button 
-                      className="btn text-xs py-1 px-3 bg-slate-700 hover:bg-slate-600"
+                      className="btn text-xs py-1 px-3 bg-slate-700 hover:bg-slate-600 flex items-center justify-center"
                       onClick={() => setSelectionRange(null)}
+                      title="Clear Selection"
                     >
-                      Clear
+                      <X className="w-3 h-3" />
                     </button>
                   </div>
                 )}
@@ -736,15 +906,42 @@ function App() {
                     name="Prediction Interval (80%)"
                     connectNulls
                   />
+                  
+                  {eventAreas.map((ea, i) => {
+                    if (ea.start === ea.end) {
+                      return (
+                        <ReferenceLine 
+                          key={`ea-${i}`} 
+                          x={ea.start} 
+                          stroke="#f59e0b"
+                          strokeDasharray="3 3" 
+                          label={{ value: ea.name, position: 'insideTopLeft', fill: '#f59e0b', fontSize: 12 }} 
+                        />
+                      );
+                    } else {
+                      return (
+                        <ReferenceArea 
+                          key={`ea-${i}`}
+                          x1={ea.start}
+                          x2={ea.end}
+                          fill="#f59e0b"
+                          fillOpacity={0.1}
+                          stroke="#f59e0b"
+                          strokeOpacity={0.3}
+                          label={{ value: ea.name, position: 'insideTopLeft', fill: '#f59e0b', fontSize: 12 }} 
+                        />
+                      );    
+                    }
+                  })}
                 </ComposedChart>
               </ResponsiveContainer>
-              
-              <div className="flex gap-4 mt-4 text-sm justify-center flex-wrap">
+              <div className="flex gap-4 mt-4 text-sm justify-center flex-wrap shrink-0">
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Actual</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500 border border-violet-500" style={{ borderStyle: 'dotted' }}></div> Forecast</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-violet-500/30"></div> Interval (80%)</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500"></div> Anomaly</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-dashed border-emerald-500 bg-transparent"></div> Counterfactual</div>
+                <div className="flex items-center gap-2"><div className="w-0.5 h-3 bg-amber-500 border-amber-500" style={{ borderStyle: 'dashed' }}></div> Event Marker</div>
               </div>
             </div>
           ) : (
