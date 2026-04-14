@@ -48,8 +48,25 @@ function App() {
   const [eventStartInput, setEventStartInput] = useState('');
   const [eventEndInput, setEventEndInput] = useState('');
   
+  const [backendStatus, setBackendStatus] = useState<{status: string, message: string}>({status: 'idle', message: 'Checking backend...'});
+
   useEffect(() => {
     document.title = `TimesFM Sandbox v${packageJson.version}`;
+    
+    // Poll backend status
+    const checkStatus = async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:8000/status');
+        const data = await res.json();
+        setBackendStatus(data);
+      } catch (e) {
+        setBackendStatus({status: 'error', message: 'Backend unreachable'});
+      }
+    };
+    
+    checkStatus();
+    const timer = setInterval(checkStatus, 2000);
+    return () => clearInterval(timer);
   }, []);
   
   const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '') => {
@@ -424,9 +441,17 @@ function App() {
           TimesFM Sandbox 
           <span className="text-sm text-slate-500 font-medium ml-2 relative top-1">v{packageJson.version}</span>
         </h1>
-        <div className={`status-badge ${isProcessing ? 'processing' : status === 'Complete' ? 'active' : ''}`}>
-          <div className="status-indicator"></div>
-          {status}
+        <div className="flex items-center gap-4">
+          {backendStatus.status !== 'ready' && (
+            <div className={`status-badge ${backendStatus.status === 'loading' ? 'processing' : 'error'}`}>
+              <div className="status-indicator"></div>
+              {backendStatus.message}
+            </div>
+          )}
+          <div className={`status-badge ${isProcessing ? 'processing' : status === 'Complete' ? 'active' : ''}`}>
+            <div className="status-indicator"></div>
+            {status}
+          </div>
         </div>
       </header>
       
@@ -733,10 +758,14 @@ function App() {
             )}
             
             <div className="mt-4 text-xs text-[#94a3b8] p-3 rounded bg-[rgba(0,0,0,0.2)] border border-[#334155]">
-              <p className="font-semibold mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Powered by:</p>
+              <p className="font-semibold mb-2 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Active Model:</p>
+              <div className="mb-3 p-2 bg-slate-900/50 rounded border border-slate-700 font-mono text-[10px] break-all">
+                {backendStatus.model_id || 'Detecting...'}
+              </div>
+              <p className="font-semibold mb-1 flex items-center gap-1">Powered by:</p>
               <ul className="list-disc pl-4 space-y-1">
-                <li>DuckDB WASM (Data Processing & Ingestion)</li>
-                <li>TimesFM Python Backend (Forecasting & Anomaly Detection)</li>
+                <li>DuckDB WASM (Data Processing)</li>
+                <li>TimesFM Python Backend</li>
               </ul>
             </div>
           </div>

@@ -35,16 +35,22 @@ class AnalyzeResponse(BaseModel):
     high: List[float] = None # 90th percentile
     counterfactual: List[float] = None # Counterfactual values for the entire range (if exclude_range provided)
 
-@app.on_event("startup")
-def load_model():
-    global tfm
-    logger.info("Initializing TimesFM model... This may take a while.")
+import threading
+
+# Global state
+tfm = None
+is_loading = False
+loading_error = None
+
+def load_model_task():
+    global tfm, is_loading, loading_error
+    is_loading = True
+    logger.info("Background: Initializing TimesFM model (this may trigger a download)...")
     try:
         import timesfm
-        # Using 1.0-200m-pytorch variant as recommended for pure torch backends
         tfm = timesfm.TimesFm(
             hparams=timesfm.TimesFmHparams(
-                backend="cpu", # Change to "gpu" if CUDA/MPS is available
+                backend="cpu",
                 per_core_batch_size=32,
                 horizon_len=128,
                 context_len=512,
@@ -53,10 +59,30 @@ def load_model():
                 huggingface_repo_id="google/timesfm-1.0-200m-pytorch"
             ),
         )
-        logger.info("TimesFM model loaded successfully.")
+        logger.info("Background: TimesFM model loaded successfully.")
     except Exception as e:
-        logger.error(f"Failed to load TimesFM model natively: {e}")
-        logger.warning("TimesFM initialization failed. The API will return 503 Service Unavailable errors.")
+        loading_error = str(e)
+        logger.error(f"Background: Failed to load TimesFM model: {e}")
+    finally:
+        is_loading = False
+
+@app.on_event("startup")
+def startup_event():
+    # Start model loading in a background thread
+    thread = threading.Thread(target=load_model_task)
+    thread.start()
+
+@app.get("/health")
+@app.get("/status")
+def get_status():
+    model_id = "google/timesfm-1.0-200m-pytorch"
+    if tfm:
+        return {"status": "ready", "message": "Model is loaded and ready.", "model_id": model_id}
+    if is_loading:
+        return {"status": "loading", "message": "Model is initializing/downloading...", "model_id": model_id}
+    if loading_error:
+        return {"status": "error", "message": loading_error, "model_id": model_id}
+    return {"status": "idle", "message": "Model initialization pending.", "model_id": model_id}
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: PredictRequest):
