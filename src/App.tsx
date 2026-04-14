@@ -785,8 +785,6 @@ function App() {
                   }
                 }}
               >
-                <option value="google/timesfm-1.0-200m-pytorch">TimesFM 1.0 (200M)</option>
-                <option value="google/timesfm-2.0-500m-pytorch">TimesFM 2.0 (500M)</option>
                 <option value="google/timesfm-2.5-200m-pytorch">TimesFM 2.5 (200M)</option>
               </select>
 

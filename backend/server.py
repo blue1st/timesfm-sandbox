@@ -42,20 +42,13 @@ import gc
 tfm = None
 is_loading = False
 loading_error = None
-current_model_id = "google/timesfm-2.0-500m-pytorch" # Default
+current_model_id = "google/timesfm-2.5-200m-pytorch" # Default
 
-MODEL_CONFIGS = {
-    "google/timesfm-1.0-200m-pytorch": {
-        "model_dims": 1280,
-        "num_layers": 20,
-        "num_heads": 16,
-    },
-    "google/timesfm-2.0-500m-pytorch": {
-        "model_dims": 1280,
-        "num_layers": 50,
-        "num_heads": 16,
-    }
-}
+# Supported model IDs
+ALL_MODEL_IDS = [
+    "google/timesfm-2.5-200m-pytorch",
+]
+
 
 def load_model_task(model_id: str):
     global tfm, is_loading, loading_error, current_model_id
@@ -70,38 +63,35 @@ def load_model_task(model_id: str):
         gc.collect()
 
     current_model_id = model_id
-    
-    config = MODEL_CONFIGS.get(model_id)
-    if not config:
-        loading_error = f"Unknown model ID: {model_id}"
-        is_loading = False
-        return
 
-    logger.info(f"Background: Loading {model_id} with config: {config}")
+    logger.info(f"Background: Loading TimesFM 2.5 model: {model_id}")
     try:
         import timesfm
-        # We ensure a completely new instance is created with fresh hparams
-        new_tfm = timesfm.TimesFm(
-            hparams=timesfm.TimesFmHparams(
-                backend="cpu",
-                per_core_batch_size=32,
-                horizon_len=128,
-                context_len=512,
-                model_dims=config["model_dims"],
-                num_layers=config["num_layers"],
-                num_heads=config["num_heads"],
-            ),
-            checkpoint=timesfm.TimesFmCheckpoint(
-                huggingface_repo_id=model_id
-            ),
+
+        model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
+            model_id,
+            torch_compile=False,  # Disable torch.compile for CPU / Apple Silicon compatibility
         )
-        tfm = new_tfm
+        model.compile(
+            timesfm.ForecastConfig(
+                max_context=1024,
+                max_horizon=256,
+                per_core_batch_size=32,
+                normalize_inputs=True,
+                use_continuous_quantile_head=True,
+                force_flip_invariance=True,
+                infer_is_positive=True,
+                fix_quantile_crossing=True,
+            )
+        )
+        tfm = model
         logger.info(f"Background: {model_id} loaded successfully.")
     except Exception as e:
         loading_error = str(e)
-        logger.error(f"Background: Failed to load {model_id}: {e}")
+        logger.error(f"Background: Failed to load {model_id}: {e}", exc_info=True)
     finally:
         is_loading = False
+
 
 @app.on_event("startup")
 def startup_event():
@@ -111,8 +101,8 @@ def startup_event():
 
 @app.post("/init_model")
 def init_model(model_id: str):
-    if model_id not in MODEL_CONFIGS:
-        raise HTTPException(status_code=400, detail="Invalid model ID")
+    if model_id not in ALL_MODEL_IDS:
+        raise HTTPException(status_code=400, detail=f"Invalid model ID: {model_id}. Available: {ALL_MODEL_IDS}")
     
     if is_loading:
         raise HTTPException(status_code=409, detail="Model is already loading")
@@ -123,7 +113,7 @@ def init_model(model_id: str):
 
 @app.get("/models")
 def get_available_models():
-    return list(MODEL_CONFIGS.keys())
+    return ALL_MODEL_IDS
 
 @app.get("/health")
 @app.get("/status")
@@ -143,19 +133,24 @@ def analyze(req: PredictRequest):
         raise HTTPException(status_code=400, detail="Data array cannot be empty")
         
     try:
+        import numpy as np
+        
         response_dict = {"forecast": [], "anomalies": []}
         
         if tfm is None:
             raise HTTPException(status_code=503, detail="TimesFMモデルの初期化に失敗しています。バックエンドのログを確認してください。")
             
-        # 1. Normal Forecast
-        forecast, full_forecast = tfm.forecast([req.data], freq=[0])
-        response_dict["forecast"] = forecast[0][:req.forecast_length].tolist()
-        
-        # Extract 10th and 90th percentiles
-        # full_forecast index: 0=mean, 1=0.1, ..., 9=0.9
-        response_dict["low"] = full_forecast[0, :req.forecast_length, 1].tolist()
-        response_dict["high"] = full_forecast[0, :req.forecast_length, 9].tolist()
+        # 1. Normal Forecast using TimesFM 2.5 API
+        inputs = [np.array(req.data)]
+        point_forecast, quantile_forecast = tfm.forecast(
+            horizon=req.forecast_length,
+            inputs=inputs,
+        )
+        # point_forecast: (batch, horizon)
+        # quantile_forecast: (batch, horizon, 10) — [mean, 0.1, 0.2, ..., 0.9]
+        response_dict["forecast"] = point_forecast[0][:req.forecast_length].tolist()
+        response_dict["low"] = quantile_forecast[0, :req.forecast_length, 1].tolist()   # 10th percentile
+        response_dict["high"] = quantile_forecast[0, :req.forecast_length, 9].tolist()  # 90th percentile
         
         # 2. Counterfactual Estimation (if exclude_range provided)
         if req.exclude_range and len(req.exclude_range) == 2:
@@ -163,14 +158,16 @@ def analyze(req: PredictRequest):
             if 0 < s_idx < len(req.data):
                 # Data before the event
                 context = req.data[:s_idx]
-                # we want to predict from s_idx to the end of data + forecast_length
+                # We want to predict from s_idx to the end of data + forecast_length
                 total_pred_len = (len(req.data) - s_idx) + req.forecast_length
-                
-                cf_forecast, _ = tfm.forecast([context], freq=[0])
-                # Note: TimesFM by default might have a limit on horizon_len (e.g. 128). 
-                # If total_pred_len > 128, it might be truncated. 
-                # But for "effect estimation" we usually care about the event window.
-                response_dict["counterfactual"] = cf_forecast[0][:total_pred_len].tolist()
+                # Clamp to max_horizon (256)
+                cf_horizon = min(total_pred_len, 256)
+
+                cf_point, _ = tfm.forecast(
+                    horizon=cf_horizon,
+                    inputs=[np.array(context)],
+                )
+                response_dict["counterfactual"] = cf_point[0][:total_pred_len].tolist()
 
         # 3. Anomaly Detection
         W = 16
@@ -178,12 +175,13 @@ def analyze(req: PredictRequest):
         eval_points = min(len(req.data) - W, 64)
         if eval_points > 0:
             start_idx = len(req.data) - eval_points
-            batch_inputs = [req.data[i-W:i] for i in range(start_idx, len(req.data))]
+            batch_inputs = [np.array(req.data[i-W:i]) for i in range(start_idx, len(req.data))]
             actuals = [req.data[i] for i in range(start_idx, len(req.data))]
             indices = list(range(start_idx, len(req.data)))
             
-            ano_forecasts, _ = tfm.forecast(batch_inputs, freq=[0]*len(batch_inputs))
-            predictions_1step = [f[0] for f in ano_forecasts]
+            ano_points, _ = tfm.forecast(horizon=1, inputs=batch_inputs)
+            # ano_points shape: (num_inputs, 1) — extract 1-step predictions
+            predictions_1step = ano_points[:, 0].tolist()
             
             import math
             errors = [abs(p - a) for p, a in zip(predictions_1step, actuals)]
@@ -199,7 +197,7 @@ def analyze(req: PredictRequest):
         return response_dict
             
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
+        logger.error(f"Prediction error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
