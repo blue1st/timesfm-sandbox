@@ -58,7 +58,13 @@ function App() {
       try {
         const res = await fetch('http://127.0.0.1:8000/status');
         const data = await res.json();
-        setBackendStatus(data);
+        setBackendStatus(prev => {
+          // If status just changed from loading to ready, and we have data, we might want to trigger re-analysis
+          if (prev.status === 'loading' && data.status === 'ready') {
+            console.log("Model is now ready, triggering re-analysis if data exists...");
+          }
+          return data;
+        });
       } catch (e) {
         setBackendStatus({status: 'error', message: 'Backend unreachable'});
       }
@@ -68,6 +74,13 @@ function App() {
     const timer = setInterval(checkStatus, 2000);
     return () => clearInterval(timer);
   }, []);
+
+  // Auto-run analysis when backend becomes ready
+  useEffect(() => {
+    if (backendStatus.status === 'ready' && rawRows.length > 0 && selectedValueCol) {
+      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol);
+    }
+  }, [backendStatus.status]);
   
   const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '') => {
     try {
@@ -144,6 +157,7 @@ function App() {
     setSelectionRange(null);
     setStatus('Idle');
     setPastedText('');
+    setIsProcessing(false);
   };
 
   const handleDataInput = async (content: string) => {
@@ -159,21 +173,13 @@ function App() {
       
       const newKeys = Object.keys(newRows[0]).filter(k => k !== '_index');
       
-      let combinedRows;
-      let updatedColumns;
-      let timeColToUse = selectedTimeCol;
-      let valColToUse = selectedValueCol;
-      let eventColToUse = selectedEventCol;
+      let combinedRows = newRows;
+      let updatedColumns = newKeys;
       
-      if (rawRows.length > 0) {
-        combinedRows = [...rawRows, ...newRows];
-        updatedColumns = Array.from(new Set([...availableColumns, ...newKeys]));
-      } else {
-        combinedRows = newRows;
-        updatedColumns = newKeys;
-        timeColToUse = updatedColumns.length > 1 ? updatedColumns[0] : '';
-        valColToUse = updatedColumns.length > 1 ? updatedColumns[1] : updatedColumns[0];
-      }
+      // Auto-select columns
+      const timeColToUse = updatedColumns.length > 1 ? updatedColumns[0] : '';
+      const valColToUse = updatedColumns.length > 1 ? updatedColumns[1] : updatedColumns[0];
+      const eventColToUse = '';
       
       setAvailableColumns(updatedColumns);
       setRawRows(combinedRows);
@@ -181,6 +187,7 @@ function App() {
       setSelectedValueCol(valColToUse);
       setSelectedEventCol(eventColToUse);
       
+      setStatus('Starting analysis...');
       await runAnalysis(combinedRows, timeColToUse, valColToUse, eventColToUse);
       
     } catch (error) {
@@ -276,11 +283,12 @@ function App() {
     if (!file) return;
     
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
       handleDataInput(text);
     };
     reader.readAsText(file);
+    e.target.value = ''; // Reset so the same file can be re-uploaded
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -758,10 +766,30 @@ function App() {
             )}
             
             <div className="mt-4 text-xs text-[#94a3b8] p-3 rounded bg-[rgba(0,0,0,0.2)] border border-[#334155]">
-              <p className="font-semibold mb-2 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Active Model:</p>
-              <div className="mb-3 p-2 bg-slate-900/50 rounded border border-slate-700 font-mono text-[10px] break-all">
-                {backendStatus.model_id || 'Detecting...'}
+              <div className="flex items-center justify-between mb-2">
+                <p className="font-semibold flex items-center gap-1"><Sparkles className="w-3 h-3" /> Active Model:</p>
+                {backendStatus.status === 'loading' && <div className="loading-spinner-tiny"></div>}
               </div>
+              
+              <select 
+                className="w-full mb-3 p-2 bg-slate-900 border border-slate-700 rounded text-[10px] font-mono focus:outline-none focus:border-primary transition-colors"
+                value={backendStatus.model_id}
+                disabled={backendStatus.status === 'loading'}
+                onChange={async (e) => {
+                  try {
+                    const modelId = e.target.value;
+                    setBackendStatus(prev => ({ ...prev, status: 'loading', message: `Switching to ${modelId}...` }));
+                    await fetch(`http://127.0.0.1:8000/init_model?model_id=${encodeURIComponent(modelId)}`, { method: 'POST' });
+                  } catch (err) {
+                    console.error("Failed to switch model:", err);
+                  }
+                }}
+              >
+                <option value="google/timesfm-1.0-200m-pytorch">TimesFM 1.0 (200M)</option>
+                <option value="google/timesfm-2.0-500m-pytorch">TimesFM 2.0 (500M)</option>
+                <option value="google/timesfm-2.5-200m-pytorch">TimesFM 2.5 (200M)</option>
+              </select>
+
               <p className="font-semibold mb-1 flex items-center gap-1">Powered by:</p>
               <ul className="list-disc pl-4 space-y-1">
                 <li>DuckDB WASM (Data Processing)</li>

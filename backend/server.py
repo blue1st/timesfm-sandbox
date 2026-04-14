@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import threading
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -35,54 +36,105 @@ class AnalyzeResponse(BaseModel):
     high: List[float] = None # 90th percentile
     counterfactual: List[float] = None # Counterfactual values for the entire range (if exclude_range provided)
 
-import threading
+import gc
 
 # Global state
 tfm = None
 is_loading = False
 loading_error = None
+current_model_id = "google/timesfm-2.0-500m-pytorch" # Default
 
-def load_model_task():
-    global tfm, is_loading, loading_error
+MODEL_CONFIGS = {
+    "google/timesfm-1.0-200m-pytorch": {
+        "model_dims": 1280,
+        "num_layers": 20,
+        "num_heads": 16,
+    },
+    "google/timesfm-2.0-500m-pytorch": {
+        "model_dims": 1280,
+        "num_layers": 50,
+        "num_heads": 16,
+    }
+}
+
+def load_model_task(model_id: str):
+    global tfm, is_loading, loading_error, current_model_id
     is_loading = True
-    logger.info("Background: Initializing TimesFM model (this may trigger a download)...")
+    loading_error = None
+
+    # Thorough cleanup of existing model
+    if tfm is not None:
+        logger.info("Background: Cleaning up previous model instance...")
+        del tfm
+        tfm = None
+        gc.collect()
+
+    current_model_id = model_id
+    
+    config = MODEL_CONFIGS.get(model_id)
+    if not config:
+        loading_error = f"Unknown model ID: {model_id}"
+        is_loading = False
+        return
+
+    logger.info(f"Background: Loading {model_id} with config: {config}")
     try:
         import timesfm
-        tfm = timesfm.TimesFm(
+        # We ensure a completely new instance is created with fresh hparams
+        new_tfm = timesfm.TimesFm(
             hparams=timesfm.TimesFmHparams(
                 backend="cpu",
                 per_core_batch_size=32,
                 horizon_len=128,
                 context_len=512,
+                model_dims=config["model_dims"],
+                num_layers=config["num_layers"],
+                num_heads=config["num_heads"],
             ),
             checkpoint=timesfm.TimesFmCheckpoint(
-                huggingface_repo_id="google/timesfm-1.0-200m-pytorch"
+                huggingface_repo_id=model_id
             ),
         )
-        logger.info("Background: TimesFM model loaded successfully.")
+        tfm = new_tfm
+        logger.info(f"Background: {model_id} loaded successfully.")
     except Exception as e:
         loading_error = str(e)
-        logger.error(f"Background: Failed to load TimesFM model: {e}")
+        logger.error(f"Background: Failed to load {model_id}: {e}")
     finally:
         is_loading = False
 
 @app.on_event("startup")
 def startup_event():
-    # Start model loading in a background thread
-    thread = threading.Thread(target=load_model_task)
+    # Start default model loading
+    thread = threading.Thread(target=load_model_task, args=(current_model_id,))
     thread.start()
+
+@app.post("/init_model")
+def init_model(model_id: str):
+    if model_id not in MODEL_CONFIGS:
+        raise HTTPException(status_code=400, detail="Invalid model ID")
+    
+    if is_loading:
+        raise HTTPException(status_code=409, detail="Model is already loading")
+
+    thread = threading.Thread(target=load_model_task, args=(model_id,))
+    thread.start()
+    return {"status": "started", "model_id": model_id}
+
+@app.get("/models")
+def get_available_models():
+    return list(MODEL_CONFIGS.keys())
 
 @app.get("/health")
 @app.get("/status")
 def get_status():
-    model_id = "google/timesfm-1.0-200m-pytorch"
     if tfm:
-        return {"status": "ready", "message": "Model is loaded and ready.", "model_id": model_id}
+        return {"status": "ready", "message": "Model is loaded and ready.", "model_id": current_model_id}
     if is_loading:
-        return {"status": "loading", "message": "Model is initializing/downloading...", "model_id": model_id}
+        return {"status": "loading", "message": "Model is initializing/downloading...", "model_id": current_model_id}
     if loading_error:
-        return {"status": "error", "message": loading_error, "model_id": model_id}
-    return {"status": "idle", "message": "Model initialization pending.", "model_id": model_id}
+        return {"status": "error", "message": loading_error, "model_id": current_model_id}
+    return {"status": "idle", "message": "Model initialization pending.", "model_id": current_model_id}
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: PredictRequest):
