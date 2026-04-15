@@ -946,7 +946,21 @@ function App() {
           </div>
           
           {data.length > 0 ? (
-            <div className="w-full flex flex-col flex-1" style={{ minHeight: 0 }}>
+            <div className="w-full flex flex-col flex-1 relative" style={{ minHeight: 0 }}>
+              {/* Inference Overlay */}
+              <div className={`inference-overlay ${!isProcessing ? 'hidden' : ''}`}>
+                <div className="ai-visual-container">
+                  <div className="ai-pulse-ring">
+                    <div className="ai-core"></div>
+                  </div>
+                  <div className="inference-text">Inference in Progress</div>
+                  <div className="scanning-container">
+                    <div className="scanning-bar"></div>
+                  </div>
+                  <div className="inference-subtext">{status}</div>
+                </div>
+              </div>
+
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex gap-4 items-center">
                   <div className="text-sm font-medium text-slate-400">Timezone:</div>
