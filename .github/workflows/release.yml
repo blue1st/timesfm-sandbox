@@ -83,7 +83,7 @@ jobs:
           echo "✅ All imports verified"
 
       - name: Build DMG
-        run: npm run dist -- --mac --${{ matrix.arch }}
+        run: npm run dist -- --mac --${{ matrix.arch }} -p never
 
       - name: Create GitHub Release (draft)
         env:
