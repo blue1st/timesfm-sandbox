@@ -58,6 +58,7 @@ function App() {
   const [eventNameInput, setEventNameInput] = useState('');
   const [eventStartInput, setEventStartInput] = useState('');
   const [eventEndInput, setEventEndInput] = useState('');
+  const [sensitivity, setSensitivity] = useState(2.5);
   
   const [backendStatus, setBackendStatus] = useState<{status: string, message: string, model_id?: string}>({status: 'idle', message: 'Checking backend...'});
 
@@ -94,7 +95,7 @@ function App() {
     }
   }, [backendStatus.status]);
   
-  const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '') => {
+  const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '', currentSensitivity: number = sensitivity) => {
     try {
       if (!valCol || !rows || rows.length === 0) return;
       
@@ -118,7 +119,7 @@ function App() {
       
       const valuesArray = chartData.map(d => d.value).filter(v => !isNaN(v));
       
-      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, 20);
+      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, 20, undefined, currentSensitivity);
       
       const chartDataWithAnomalies = chartData.map((item, idx) => ({
         ...item,
@@ -809,6 +810,35 @@ function App() {
                 <li>DuckDB WASM (Data Processing)</li>
                 <li>TimesFM Python Backend</li>
               </ul>
+
+              <div className="mt-4 pt-4 border-t border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="font-semibold flex items-center gap-1"><Sparkles className="w-3 h-3 text-amber-500" /> Anomaly Sensitivity</p>
+                  <span className="text-[10px] text-amber-500 font-mono font-bold">{sensitivity.toFixed(1)}σ</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="1.0" 
+                  max="5.0" 
+                  step="0.1" 
+                  className="w-full accent-amber-500 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                  value={sensitivity}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setSensitivity(val);
+                  }}
+                  onMouseUp={() => {
+                    if (rawRows.length > 0) {
+                      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity);
+                    }
+                  }}
+                />
+                <div className="flex justify-between mt-1 text-[8px] text-slate-500 font-mono">
+                  <span>SENSITIVE</span>
+                  <span>NORMAL(2.5)</span>
+                  <span>STRICT</span>
+                </div>
+              </div>
             </div>
           </div>
         </aside>

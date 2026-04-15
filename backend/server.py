@@ -29,7 +29,6 @@ try:
     server_debug_log(f"Numpy {np.__version__} loaded successfully")
     
     import torch
-    # FORCE HACK: Tell torch that numpy is definitely available
     try:
         torch.has_numpy = True
     except:
@@ -43,7 +42,7 @@ except Exception as e:
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,7 +60,8 @@ app.add_middleware(
 class PredictRequest(BaseModel):
     data: List[float]
     forecast_length: int = 20
-    exclude_range: List[int] = None
+    exclude_range: Optional[List[int]] = None
+    anomaly_threshold: float = 2.5 # Used as quantile index or sigma
 
 class AnalyzeResponse(BaseModel):
     forecast: List[float]
@@ -148,7 +148,7 @@ def get_status():
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: PredictRequest):
     global tfm
-    server_debug_log(f"--- Analyze START: data_len={len(req.data)} ---")
+    server_debug_log(f"--- Analyze START: data_len={len(req.data)}, threshold={req.anomaly_threshold} ---")
     
     try:
         import numpy as np
@@ -167,9 +167,7 @@ def analyze(req: PredictRequest):
             horizon=req.forecast_length,
             inputs=inputs,
         )
-        server_debug_log(f"Inference SUCCESS: point_shape={point_forecast.shape}")
         
-        # Convert to list and clean NaNs
         def clean_list(arr):
             lst = arr.tolist()
             return [0.0 if (x is None or (not isinstance(x, str) and (x != x or x == float('inf') or x == float('-inf')))) else x for x in lst]
@@ -185,49 +183,61 @@ def analyze(req: PredictRequest):
             "anomalies": [],
             "counterfactual": None
         }
-        server_debug_log("Main forecast converted to list.")
 
-        # 2. Counterfactual (Optional)
+        # 2. Counterfactual
         if req.exclude_range and len(req.exclude_range) == 2:
             s_idx = req.exclude_range[0]
             if 0 < s_idx < len(req.data):
-                server_debug_log(f"Counterfactual start: s_idx={s_idx}")
                 context = req.data[:s_idx]
                 total_pred_len = (len(req.data) - s_idx) + req.forecast_length
                 cf_point, _ = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[np.array(context)])
                 response_dict["counterfactual"] = clean_list(cf_point[0][:total_pred_len])
-                server_debug_log("Counterfactual finished.")
 
-        # 3. Anomaly Detection (with safety block)
+        # 3. Native Anomaly Detection using TimesFM Quantiles
         try:
-            W = 16
-            eval_points = min(len(req.data) - W, 64)
+            W = 32 # Larger window for context
+            eval_points = min(len(req.data) - 4, 128) # Try to evaluate more points if available
             if eval_points > 0:
-                server_debug_log(f"Anomaly detection start: eval_points={eval_points}")
+                server_debug_log(f"Native Anomaly detection start: eval={eval_points}")
                 start_idx = len(req.data) - eval_points
-                batch_inputs = [np.array(req.data[i-W:i]) for i in range(start_idx, len(req.data))]
+                batch_inputs = [np.array(req.data[max(0, i-W):i]) for i in range(start_idx, len(req.data))]
                 actuals = [req.data[i] for i in range(start_idx, len(req.data))]
                 indices = list(range(start_idx, len(req.data)))
                 
-                ano_points, _ = tfm.forecast(horizon=1, inputs=batch_inputs)
-                predictions_1step = ano_points[:, 0].tolist()
+                # Predict 1 step ahead with quantiles
+                _, quantiles = tfm.forecast(horizon=1, inputs=batch_inputs)
                 
-                import math
-                errors = [abs(p - a) for p, a in zip(predictions_1step, actuals)]
-                mean_err = sum(errors) / len(errors)
-                std_err = math.sqrt(sum((e - mean_err)**2 for e in errors) / len(errors)) if len(errors)>1 else 0
-                threshold = mean_err + 2.5 * std_err
+                # TimesFM 2.5 Quantile Mapping:
+                # 0: Mean, 1: 0.1, 2: 0.2, ..., 9: 0.9
+                # If we want sensitivity related to "out of bounds":
+                # Sensitivity 2.5 (Default) -> Check if outside [0.1, 0.9] range
+                # Higher Sensitivity (e.g. 1.0) -> Check if outside narrower range? No, usually 
+                # we'll map the UI slider (1.0 to 5.0) to quantile widths.
                 
+                # Logic: Flag as anomaly if actual is below q1 (0.1) or above q9 (0.9)
+                # To make it adjustable: we'll use the ratio of deviation from mean vs quantile width
                 anomalies = []
-                for idx, err in zip(indices, errors):
-                    if err > threshold and err > 0.01:
+                for idx, act, q_row in zip(indices, actuals, quantiles):
+                    q_low = q_row[0, 1]  # 0.1 quantile
+                    q_high = q_row[0, 9] # 0.9 quantile
+                    q_mean = q_row[0, 0] # Mean
+                    
+                    # Calculate "Quantile Sigma"
+                    # We treat the distance between q9 and q1 as a proxy for 2*sigma
+                    q_sigma = (q_high - q_low) / 2.0
+                    if q_sigma < 1e-6: q_sigma = 0.01 # Avoid div zero
+                    
+                    error = abs(act - q_mean)
+                    # Use req.anomaly_threshold as the sigma multiplier
+                    if error > (req.anomaly_threshold * q_sigma):
                         anomalies.append(idx)
+                
                 response_dict["anomalies"] = anomalies
-                server_debug_log(f"Anomaly detection SUCCESS: count={len(anomalies)}")
+                server_debug_log(f"Native Anomaly Detection SUCCESS: {len(anomalies)} found")
         except Exception as e:
-            server_debug_log(f"Anomaly detection WARNING (skipped): {e}")
+            server_debug_log(f"Anomaly detection WARNING: {e}")
+            traceback.print_exc()
 
-        server_debug_log("--- Response ready to return ---")
         return response_dict
             
     except Exception as e:

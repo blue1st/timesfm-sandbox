@@ -12,7 +12,8 @@ const getBackendUrl = async () => {
 export async function analyzeTimeSeries(
   data: number[], 
   forecastLength: number = 20, 
-  excludeRange?: [number, number]
+  excludeRange?: [number, number],
+  sensitivity: number = 2.5
 ): Promise<{forecast: number[], anomalies: number[], low?: number[], high?: number[], counterfactual?: number[]}> {
   console.log("Requesting TimesFM analysis from Python Backend...");
   
@@ -27,7 +28,8 @@ export async function analyzeTimeSeries(
       body: JSON.stringify({
         data,
         forecast_length: forecastLength,
-        exclude_range: excludeRange
+        exclude_range: excludeRange,
+        anomaly_threshold: sensitivity
       }),
     });
   } catch (err) {
