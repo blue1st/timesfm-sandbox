@@ -8,12 +8,15 @@ import gc
 
 # --- FORCE NUMPY LOAD FIRST ---
 def server_debug_log(msg):
+    if os.environ.get("TIMESFM_DEBUG", "0") != "1":
+        return
     try:
         debug_path = os.path.expanduser("~/Desktop/timesfm_debug.txt")
         pid = os.getpid()
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(debug_path, "a") as f:
             f.write(f"[{timestamp}] [PID:{pid}] [server.py] {msg}\n")
+        print(f"[DEBUG] {msg}")
     except:
         pass
 
@@ -286,8 +289,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="Verify imports and exit")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     args, unknown = parser.parse_known_args()
+
+    if args.debug:
+        os.environ["TIMESFM_DEBUG"] = "1"
 
     if args.check:
         print("--- Smoke Test: Verifying Imports ---")

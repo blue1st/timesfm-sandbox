@@ -6,6 +6,8 @@ import traceback
 _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 
 def debug_log(msg):
+    if os.environ.get("TIMESFM_DEBUG", "0") != "1":
+        return
     print(msg)
     try:
         debug_path = os.path.expanduser("~/Desktop/timesfm_debug.txt")
