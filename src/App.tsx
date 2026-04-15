@@ -961,6 +961,7 @@ function App() {
                     dot={false}
                     name="Actual"
                     connectNulls
+                    isAnimationActive={false}
                   />
                   
                   <Line 
@@ -972,12 +973,14 @@ function App() {
                     dot={false}
                     name="TimesFM Forecast"
                     connectNulls
+                    isAnimationActive={false}
                   />
                   
                   <Scatter 
                     dataKey="anomaly_value" 
                     fill="#ef4444" 
                     name="Anomaly"
+                    isAnimationActive={false}
                   />
 
                   <Line 
@@ -989,6 +992,7 @@ function App() {
                     dot={false}
                     name="No-Event Counterfactual"
                     connectNulls
+                    isAnimationActive={false}
                   />
 
                   <Area
@@ -999,6 +1003,7 @@ function App() {
                     fillOpacity={0.15}
                     name="Prediction Interval (80%)"
                     connectNulls
+                    isAnimationActive={false}
                   />
                   
                   {eventAreas.map((ea, i) => {
