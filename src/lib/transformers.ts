@@ -1,13 +1,4 @@
-const getBackendUrl = async () => {
-  // @ts-ignore
-  if (window.require) {
-    // @ts-ignore
-    const { ipcRenderer } = window.require('electron');
-    const port = await ipcRenderer.invoke('get-port');
-    return `http://127.0.0.1:${port}`;
-  }
-  return 'http://127.0.0.1:8000'; // Fallback
-};
+import { getBackendUrl } from './backend';
 
 export async function analyzeTimeSeries(
   data: number[], 
@@ -34,7 +25,7 @@ export async function analyzeTimeSeries(
     });
   } catch (err) {
     console.error("Failed to connect to Python backend:", err);
-    throw new Error("バックエンドサーバーに接続できません。起動状態を確認してください。");
+    throw new Error(`バックエンドサーバー(${baseUrl})に接続できません。サーバーの起動状態（ポート ${baseUrl.split(':').pop()}）を確認してください。`);
   }
 
   if (!response.ok) {

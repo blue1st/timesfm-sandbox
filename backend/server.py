@@ -66,9 +66,9 @@ class PredictRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     forecast: List[float]
     anomalies: List[int]
-    low: List[float] = None
-    high: List[float] = None
-    counterfactual: List[float] = None
+    low: Optional[List[float]] = None
+    high: Optional[List[float]] = None
+    counterfactual: Optional[List[float]] = None
 
 # Global state
 tfm = None
@@ -193,47 +193,59 @@ def analyze(req: PredictRequest):
                 cf_point, _ = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[np.array(context)])
                 response_dict["counterfactual"] = clean_list(cf_point[0][:total_pred_len])
 
-        # 3. Native Anomaly Detection using TimesFM Quantiles
+        # 3. Pure TimesFM Anomaly Detection
         try:
-            W = 32 # Larger window for context
-            eval_points = min(len(req.data) - 4, 128) # Try to evaluate more points if available
-            if eval_points > 0:
-                server_debug_log(f"Native Anomaly detection start: eval={eval_points}")
-                start_idx = len(req.data) - eval_points
-                batch_inputs = [np.array(req.data[max(0, i-W):i]) for i in range(start_idx, len(req.data))]
-                actuals = [req.data[i] for i in range(start_idx, len(req.data))]
-                indices = list(range(start_idx, len(req.data)))
+            # We use a sliding window context and 1-step ahead forecasting to evaluate each point.
+            # This is "Pure" because it relies entirely on the model's prediction and uncertainty (quantiles).
+            
+            ctx_len = 512 # Use a generous context window for better accuracy
+            min_ctx = 32  # Minimum points needed to start detecting
+            
+            anomalies = []
+            if len(req.data) > min_ctx:
+                server_debug_log(f"Pure Anomaly detection start for {len(req.data)} points")
                 
-                # Predict 1 step ahead with quantiles
-                _, quantiles = tfm.forecast(horizon=1, inputs=batch_inputs)
+                batch_inputs = []
+                actuals = []
+                indices = []
                 
-                # TimesFM 2.5 Quantile Mapping:
-                # 0: Mean, 1: 0.1, 2: 0.2, ..., 9: 0.9
-                # If we want sensitivity related to "out of bounds":
-                # Sensitivity 2.5 (Default) -> Check if outside [0.1, 0.9] range
-                # Higher Sensitivity (e.g. 1.0) -> Check if outside narrower range? No, usually 
-                # we'll map the UI slider (1.0 to 5.0) to quantile widths.
+                # Prepare all evaluation points
+                for i in range(min_ctx, len(req.data)):
+                    context = req.data[max(0, i - ctx_len):i]
+                    batch_inputs.append(np.array(context))
+                    actuals.append(req.data[i])
+                    indices.append(i)
                 
-                # Logic: Flag as anomaly if actual is below q1 (0.1) or above q9 (0.9)
-                # To make it adjustable: we'll use the ratio of deviation from mean vs quantile width
-                anomalies = []
-                for idx, act, q_row in zip(indices, actuals, quantiles):
-                    q_low = q_row[0, 1]  # 0.1 quantile
-                    q_high = q_row[0, 9] # 0.9 quantile
-                    q_mean = q_row[0, 0] # Mean
+                # Process in batches to balance speed and memory
+                batch_size = 64
+                for i in range(0, len(batch_inputs), batch_size):
+                    b_inputs = batch_inputs[i : i + batch_size]
+                    b_actuals = actuals[i : i + batch_size]
+                    b_indices = indices[i : i + batch_size]
                     
-                    # Calculate "Quantile Sigma"
-                    # We treat the distance between q9 and q1 as a proxy for 2*sigma
-                    q_sigma = (q_high - q_low) / 2.0
-                    if q_sigma < 1e-6: q_sigma = 0.01 # Avoid div zero
+                    # 1-step ahead forecast with quantiles
+                    _, quantiles = tfm.forecast(horizon=1, inputs=b_inputs)
                     
-                    error = abs(act - q_mean)
-                    # Use req.anomaly_threshold as the sigma multiplier
-                    if error > (req.anomaly_threshold * q_sigma):
-                        anomalies.append(idx)
+                    for idx, act, q_row in zip(b_indices, b_actuals, quantiles):
+                        # TimesFM 2.5 Quantiles: 0=Mean, 1=0.1, 5=0.5 (Median), 9=0.9
+                        q_median = q_row[0, 5]
+                        q_low = q_row[0, 1]
+                        q_high = q_row[0, 9]
+                        
+                        # Calculate a normalized deviation score based on the model's own uncertainty (quantile width)
+                        # A width of (q_high - q_low) covers 80% of the distribution.
+                        # For a normal distribution, this is ~2.56 sigma.
+                        q_width = max(1e-6, q_high - q_low)
+                        
+                        # Standardized Score: (Deviation from Median) / (Half-Width)
+                        # If threshold = 1.0, it roughly flags items outside the 80% interval.
+                        score = abs(act - q_median) / (q_width / 2.0)
+                        
+                        if score > req.anomaly_threshold:
+                            anomalies.append(idx)
                 
                 response_dict["anomalies"] = anomalies
-                server_debug_log(f"Native Anomaly Detection SUCCESS: {len(anomalies)} found")
+                server_debug_log(f"Pure Anomaly Detection SUCCESS: {len(anomalies)} anomalies found")
         except Exception as e:
             server_debug_log(f"Anomaly detection WARNING: {e}")
             traceback.print_exc()
@@ -264,4 +276,12 @@ def gcs_fetch(req: dict):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8000")))
+    port_str = os.environ.get("PORT", "8000")
+    try:
+        actual_port = int(port_str)
+        server_debug_log(f"--- SERVER STARTING on port {actual_port} ---")
+        uvicorn.run(app, host="127.0.0.1", port=actual_port)
+    except Exception as e:
+        server_debug_log(f"FATAL STARTUP ERROR: {e}")
+        server_debug_log(traceback.format_exc())
+        sys.exit(1)

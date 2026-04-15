@@ -7,18 +7,10 @@ import {
 
 import { processCSV } from './lib/duckdb';
 import { analyzeTimeSeries } from './lib/transformers';
+import { getBackendUrl } from './lib/backend';
 import './index.css';
 
-const getBackendUrl = async () => {
-  // @ts-ignore
-  if (window.require) {
-    // @ts-ignore
-    const { ipcRenderer } = window.require('electron');
-    const port = await ipcRenderer.invoke('get-port');
-    return `http://127.0.0.1:${port}`;
-  }
-  return 'http://127.0.0.1:8000';
-};
+// Removed local getBackendUrl to use centralized version from ./lib/backend
 
 interface DataPoint {
   index: number | string;
