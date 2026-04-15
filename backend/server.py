@@ -11,20 +11,20 @@ def server_debug_log(msg):
     except:
         pass
 
+# Force CPU inference for stability in packaged environment if needed
+os.environ["JAX_PLATFORMS"] = "cpu"
+os.environ["TORCH_NUMPY_PREFER_ENV"] = "1"
+
 try:
     import numpy as np
-    # Essential for torch to find numpy in some PyInstaller environments
     sys.modules['numpy'] = np
     import numpy.core.multiarray as multiarray
     sys.modules['numpy.core.multiarray'] = multiarray
-    
-    server_debug_log(f"Numpy {np.__version__} loaded successfully from {np.__file__}")
+    server_debug_log(f"Numpy {np.__version__} loaded successfully")
 except Exception as e:
     server_debug_log(f"CRITICAL: Numpy import failed: {e}")
-
-# Pre-set torch environment variables before ANY other import
-os.environ["TORCH_NUMPY_PREFER_ENV"] = "1"
 # ------------------------------
+
 
 
 from fastapi import FastAPI, HTTPException
@@ -164,7 +164,11 @@ def analyze(req: PredictRequest):
         response_dict = {"forecast": [], "anomalies": []}
         
         if tfm is None:
+            server_debug_log("Analyze ERROR: tfm is None")
             raise HTTPException(status_code=503, detail="TimesFMモデルの初期化に失敗しています。バックエンドのログを確認してください。")
+        
+        server_debug_log(f"--- Analyze Start: data_len={len(req.data)}, forecast_len={req.forecast_length} ---")
+
             
         # 1. Normal Forecast using TimesFM 2.5 API
         inputs = [np.array(req.data)]
@@ -172,6 +176,8 @@ def analyze(req: PredictRequest):
             horizon=req.forecast_length,
             inputs=inputs,
         )
+        server_debug_log(f"Forecast done: point_shape={point_forecast.shape}, sample={point_forecast[0][:5].tolist()}")
+
         # point_forecast: (batch, horizon)
         # quantile_forecast: (batch, horizon, 10) — [mean, 0.1, 0.2, ..., 0.9]
         response_dict["forecast"] = point_forecast[0][:req.forecast_length].tolist()
