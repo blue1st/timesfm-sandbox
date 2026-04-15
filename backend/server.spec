@@ -25,10 +25,16 @@ numpy_random_dynlibs = collect_dynamic_libs('numpy.random')
 # Explicitly collect numpy's .libs directory (contains OpenBLAS/MKL)
 import os
 import numpy as np
-numpy_libs_dir = os.path.join(os.path.dirname(np.__file__), ".libs")
+import glob
+numpy_dir = os.path.dirname(np.__file__)
+numpy_libs_dir = os.path.join(numpy_dir, ".libs")
 all_datas = timesfm_datas + torch_datas + numpy_datas + safetensors_datas
 if os.path.exists(numpy_libs_dir):
     all_datas += [(numpy_libs_dir, "numpy/.libs")]
+
+# Add numpy native extensions to binaries for flatter structure
+numpy_so_files = glob.glob(os.path.join(numpy_dir, "**/*.so"), recursive=True) + \
+                 glob.glob(os.path.join(numpy_dir, "**/*.dylib"), recursive=True)
 
 all_binaries = (
     timesfm_binaries
@@ -40,7 +46,9 @@ all_binaries = (
     + numpy_linalg_dynlibs
     + numpy_fft_dynlibs
     + numpy_random_dynlibs
+    + [(f, ".") for f in numpy_so_files] # Flatten numpy extensions
 )
+
 all_hiddenimports = (
     timesfm_hiddenimports
     + torch_hiddenimports

@@ -13,11 +13,19 @@ def server_debug_log(msg):
 
 try:
     import numpy as np
+    # Essential for torch to find numpy in some PyInstaller environments
     sys.modules['numpy'] = np
+    import numpy.core.multiarray as multiarray
+    sys.modules['numpy.core.multiarray'] = multiarray
+    
     server_debug_log(f"Numpy {np.__version__} loaded successfully from {np.__file__}")
 except Exception as e:
     server_debug_log(f"CRITICAL: Numpy import failed: {e}")
+
+# Pre-set torch environment variables before ANY other import
+os.environ["TORCH_NUMPY_PREFER_ENV"] = "1"
 # ------------------------------
+
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
