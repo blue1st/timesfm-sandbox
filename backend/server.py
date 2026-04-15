@@ -43,11 +43,20 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: trigger model load in background
+    thread = threading.Thread(target=load_model_task, args=(current_model_id,))
+    thread.start()
+    yield
+    # Shutdown logic (if any) could go here
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -122,10 +131,7 @@ def load_model_task(model_id: str):
     finally:
         is_loading = False
 
-@app.on_event("startup")
-def startup_event():
-    thread = threading.Thread(target=load_model_task, args=(current_model_id,))
-    thread.start()
+
 
 @app.post("/init_model")
 def init_model(model_id: str):
@@ -276,11 +282,31 @@ def gcs_fetch(req: dict):
 
 if __name__ == "__main__":
     import uvicorn
-    port_str = os.environ.get("PORT", "8000")
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true", help="Verify imports and exit")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
+    args, unknown = parser.parse_known_args()
+
+    if args.check:
+        print("--- Smoke Test: Verifying Imports ---")
+        try:
+            import numpy as np
+            import torch
+            import timesfm
+            print(f"✅ Numpy version: {np.__version__}")
+            print(f"✅ Torch version: {torch.__version__}")
+            print(f"✅ TimesFM module imported successfully")
+            sys.exit(0)
+        except Exception as e:
+            print(f"❌ Smoke test failed: {e}")
+            traceback.print_exc()
+            sys.exit(1)
+
     try:
-        actual_port = int(port_str)
-        server_debug_log(f"--- SERVER STARTING on port {actual_port} ---")
-        uvicorn.run(app, host="0.0.0.0", port=actual_port)
+        server_debug_log(f"--- SERVER STARTING on port {args.port} ---")
+        uvicorn.run(app, host="0.0.0.0", port=args.port)
     except Exception as e:
         server_debug_log(f"FATAL STARTUP ERROR: {e}")
         server_debug_log(traceback.format_exc())
