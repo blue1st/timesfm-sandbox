@@ -19,9 +19,18 @@ import os
 import numpy as np
 numpy_dir = os.path.dirname(np.__file__)
 numpy_libs_dir = os.path.join(numpy_dir, ".libs")
+
+# Explicitly collect dynamic libraries (.so/.dylib)
+numpy_dynlibs = collect_dynamic_libs('numpy')
+numpy_core_dynlibs = collect_dynamic_libs('numpy.core')
+numpy_linalg_dynlibs = collect_dynamic_libs('numpy.linalg')
+numpy_fft_dynlibs = collect_dynamic_libs('numpy.fft')
+numpy_random_dynlibs = collect_dynamic_libs('numpy.random')
+
 all_datas = timesfm_datas + torch_datas + numpy_datas + safetensors_datas
 if os.path.exists(numpy_libs_dir):
     all_datas += [(numpy_libs_dir, "numpy/.libs")]
+
 
 all_binaries = (
     timesfm_binaries
