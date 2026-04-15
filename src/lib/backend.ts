@@ -1,10 +1,24 @@
+declare global {
+  interface Window {
+    electronAPI?: {
+      getBackendPort: () => Promise<number>;
+    };
+    require?: (module: string) => any;
+  }
+}
+
 export const getBackendUrl = async () => {
+  // 0. Use environment variable from Vite (highest priority, useful for Docker/Web)
+  // @ts-ignore
+  if (import.meta.env.VITE_BACKEND_URL) {
+    return import.meta.env.VITE_BACKEND_URL;
+  }
+
   console.log("getBackendUrl: determining backend URL...");
   
   let port: any = null;
 
   // 1. Try to use the exposed electronAPI from preload
-  // @ts-ignore
   if (window.electronAPI && window.electronAPI.getBackendPort) {
     try {
       port = await window.electronAPI.getBackendPort();
@@ -18,10 +32,8 @@ export const getBackendUrl = async () => {
   }
 
   // 2. Fallback for window.require (legacy/compatibility)
-  // @ts-ignore
   if (window.require) {
     try {
-      // @ts-ignore
       const { ipcRenderer } = window.require('electron');
       port = await ipcRenderer.invoke('get-port');
       if (port) {

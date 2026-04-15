@@ -280,7 +280,7 @@ if __name__ == "__main__":
     try:
         actual_port = int(port_str)
         server_debug_log(f"--- SERVER STARTING on port {actual_port} ---")
-        uvicorn.run(app, host="127.0.0.1", port=actual_port)
+        uvicorn.run(app, host="0.0.0.0", port=actual_port)
     except Exception as e:
         server_debug_log(f"FATAL STARTUP ERROR: {e}")
         server_debug_log(traceback.format_exc())
