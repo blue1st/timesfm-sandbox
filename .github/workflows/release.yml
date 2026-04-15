@@ -82,11 +82,30 @@ jobs:
           backend/dist/server/server --check
           echo "✅ All imports verified"
 
-      - name: build and release
+      - name: Build DMG
+        run: npm run dist -- --mac --${{ matrix.arch }}
+
+      - name: Create GitHub Release (draft)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for i in 1 2 3; do npm run dist -- --mac --${{ matrix.arch }} -p always && break || sleep 15; done
+          TAG_NAME=${{ github.ref_name }}
+          gh release create "$TAG_NAME" --draft --generate-notes 2>/dev/null || true
+
+      - name: Upload DMG to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME=${{ github.ref_name }}
+          DMG_FILE=$(find release -name "*.dmg" | head -n 1)
+          if [ -z "$DMG_FILE" ]; then
+            echo "❌ No DMG file found in release/"
+            ls -R release/
+            exit 1
+          fi
+          echo "Uploading $DMG_FILE..."
+          gh release upload "$TAG_NAME" "$DMG_FILE" --clobber
+          echo "✅ Uploaded $(basename $DMG_FILE)"
 
   update-tap:
     needs: publish-release
@@ -109,9 +128,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME=${{ github.ref_name }}
-          gh release edit "$TAG_NAME" --draft=false || true
+          # Un-draft the release so assets are publicly accessible
+          gh release edit "$TAG_NAME" --draft=false
+          # Download DMGs
           gh release download "$TAG_NAME" --pattern "*.dmg" --dir .
-          ls -R
+          echo "Downloaded files:"
+          ls -la *.dmg
 
       - name: Update Homebrew Tap
         env:
