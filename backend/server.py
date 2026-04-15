@@ -6,8 +6,12 @@ import threading
 # --- FORCE NUMPY LOAD FIRST ---
 def server_debug_log(msg):
     try:
-        with open(os.path.expanduser("~/Desktop/timesfm_debug.txt"), "a") as f:
-            f.write(f"[server.py] {msg}\n")
+        debug_path = os.path.expanduser("~/Desktop/timesfm_debug.txt")
+        # Write with timestamp
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(debug_path, "a") as f:
+            f.write(f"[{timestamp}] [server.py] {msg}\n")
     except:
         pass
 
@@ -21,9 +25,18 @@ try:
     import numpy.core.multiarray as multiarray
     sys.modules['numpy.core.multiarray'] = multiarray
     server_debug_log(f"Numpy {np.__version__} loaded successfully")
+    
+    import torch
+    # FORCE HACK: Tell torch that numpy is definitely available
+    try:
+        torch.has_numpy = True
+    except:
+        pass
+    server_debug_log(f"Torch {torch.__version__} loaded. has_numpy={getattr(torch, 'has_numpy', 'N/A')}")
 except Exception as e:
-    server_debug_log(f"CRITICAL: Numpy import failed: {e}")
+    server_debug_log(f"CRITICAL: Early import failed: {e}")
 # ------------------------------
+
 
 
 
@@ -80,24 +93,27 @@ def load_model_task(model_id: str):
     global tfm, is_loading, loading_error, current_model_id
     is_loading = True
     loading_error = None
+    server_debug_log(f"--- Model Load Task START: {model_id} ---")
 
     # Thorough cleanup of existing model
     if tfm is not None:
-        logger.info("Background: Cleaning up previous model instance...")
+        server_debug_log("Cleaning up previous tfm instance...")
         del tfm
         tfm = None
         gc.collect()
 
     current_model_id = model_id
 
-    logger.info(f"Background: Loading TimesFM 2.5 model: {model_id}")
     try:
+        server_debug_log("Starting timesfm import...")
         import timesfm
+        server_debug_log("timesfm module imported. Loading weights from hub...")
 
         model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
             model_id,
             torch_compile=False,  # Disable torch.compile for CPU / Apple Silicon compatibility
         )
+        server_debug_log("Model instance created. Starting compilation...")
         model.compile(
             timesfm.ForecastConfig(
                 max_context=1024,
@@ -111,10 +127,12 @@ def load_model_task(model_id: str):
             )
         )
         tfm = model
-        logger.info(f"Background: {model_id} loaded successfully.")
+        server_debug_log(f"--- Model Load Task SUCCESS: {model_id} ---")
     except Exception as e:
+        import traceback
         loading_error = str(e)
-        logger.error(f"Background: Failed to load {model_id}: {e}", exc_info=True)
+        server_debug_log(f"--- Model Load Task FAILED: {e} ---")
+        server_debug_log(traceback.format_exc())
     finally:
         is_loading = False
 

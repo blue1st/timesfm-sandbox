@@ -14,27 +14,14 @@ torch_datas, torch_binaries, torch_hiddenimports = collect_all('torch')
 numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all('numpy')
 safetensors_datas, safetensors_binaries, safetensors_hiddenimports = collect_all('safetensors')
 
-# Explicitly collect dynamic libraries (.so/.dylib) — collect_all sometimes
-# misses transitive native dependencies, especially on Intel macOS
-numpy_dynlibs = collect_dynamic_libs('numpy')
-numpy_core_dynlibs = collect_dynamic_libs('numpy.core')
-numpy_linalg_dynlibs = collect_dynamic_libs('numpy.linalg')
-numpy_fft_dynlibs = collect_dynamic_libs('numpy.fft')
-numpy_random_dynlibs = collect_dynamic_libs('numpy.random')
-
 # Explicitly collect numpy's .libs directory (contains OpenBLAS/MKL)
 import os
 import numpy as np
-import glob
 numpy_dir = os.path.dirname(np.__file__)
 numpy_libs_dir = os.path.join(numpy_dir, ".libs")
 all_datas = timesfm_datas + torch_datas + numpy_datas + safetensors_datas
 if os.path.exists(numpy_libs_dir):
     all_datas += [(numpy_libs_dir, "numpy/.libs")]
-
-# Add numpy native extensions to binaries for flatter structure
-numpy_so_files = glob.glob(os.path.join(numpy_dir, "**/*.so"), recursive=True) + \
-                 glob.glob(os.path.join(numpy_dir, "**/*.dylib"), recursive=True)
 
 all_binaries = (
     timesfm_binaries
@@ -46,7 +33,6 @@ all_binaries = (
     + numpy_linalg_dynlibs
     + numpy_fft_dynlibs
     + numpy_random_dynlibs
-    + [(f, ".") for f in numpy_so_files] # Flatten numpy extensions
 )
 
 all_hiddenimports = (
@@ -68,7 +54,6 @@ all_hiddenimports = (
     + collect_submodules('google_auth_oauthlib')
     + [
         'gcp_service', 'pandas', 'db_dtypes', 'pandas_gbq',
-        # numpy core native extensions — critical for "Numpy is available"
         'numpy.core._multiarray_umath',
         'numpy.core._multiarray_tests',
         'numpy.core._dtype_ctypes',
@@ -87,7 +72,6 @@ all_hiddenimports = (
         'numpy.random._generator',
         'numpy.random.mtrand',
         'numpy.random.bit_generator',
-        # numpy._distributor_init handles BLAS/LAPACK library loading
         'numpy._distributor_init',
         'numpy._pytesttester',
     ]
