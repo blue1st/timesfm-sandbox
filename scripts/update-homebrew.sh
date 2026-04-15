@@ -57,8 +57,11 @@ cask "${CASK_NAME}" do
   app "TimesFM Sandbox.app"
 
   postflight do
-    system_command "/usr/bin/find",
-                   args: ["#{appdir}/TimesFM Sandbox.app", "-type", "f", "-exec", "xattr", "-c", "{}", ";"],
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/TimesFM Sandbox.app"],
+                   sudo: false
+    system_command "/usr/bin/codesign",
+                   args: ["--force", "--deep", "--sign", "-", "#{appdir}/TimesFM Sandbox.app"],
                    sudo: false
   end
 

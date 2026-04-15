@@ -64,6 +64,24 @@ jobs:
           ls -la backend/dist/server/
           test -f backend/dist/server/server && echo "✅ Backend binary found" || (echo "❌ Backend binary NOT found" && exit 1)
 
+      - name: Ad-hoc codesign PyInstaller binaries
+        run: |
+          echo "Signing shared libraries..."
+          find backend/dist/server -type f \( -name "*.so" -o -name "*.dylib" \) | while read f; do
+            codesign --force --sign - "$f" 2>/dev/null || true
+          done
+          echo "Signing executable binaries..."
+          find backend/dist/server -type f -perm +111 ! -name "*.so" ! -name "*.dylib" | while read f; do
+            codesign --force --sign - "$f" 2>/dev/null || true
+          done
+          echo "✅ Ad-hoc codesigning complete"
+
+      - name: Smoke test — verify imports in packaged binary
+        run: |
+          echo "Running import verification..."
+          backend/dist/server/server --check
+          echo "✅ All imports verified"
+
       - name: build and release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

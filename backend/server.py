@@ -245,6 +245,23 @@ def gcs_fetch(req: GCSRequest):
 
 
 if __name__ == "__main__":
+    # Import verification mode: test all critical imports and exit
+    if "--check" in sys.argv:
+        errors = []
+        for mod_name in ["numpy", "torch", "timesfm", "pandas", "fastapi", "uvicorn"]:
+            try:
+                mod = __import__(mod_name)
+                ver = getattr(mod, "__version__", "?")
+                print(f"  ✅ {mod_name} {ver}")
+            except Exception as e:
+                print(f"  ❌ {mod_name}: {e}")
+                errors.append(mod_name)
+        if errors:
+            print(f"\nFAILED: {errors}")
+            sys.exit(1)
+        print("\nAll imports OK")
+        sys.exit(0)
+
     import uvicorn
     # Enable running directly via `python server.py`
     port = int(os.environ.get("PORT", "8000"))

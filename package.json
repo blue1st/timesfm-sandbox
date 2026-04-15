@@ -20,8 +20,11 @@
         "target": "default"
       },
       "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "identity": null,
+      "forceCodeSigning": false
     },
+    "afterPack": "./scripts/afterPack.js",
     "extraResources": [
       {
         "from": "backend/dist/server",

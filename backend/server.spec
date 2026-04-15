@@ -1,6 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_submodules,
+    collect_dynamic_libs,
+)
 
 block_cipher = None
 
@@ -10,13 +14,36 @@ torch_datas, torch_binaries, torch_hiddenimports = collect_all('torch')
 numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all('numpy')
 safetensors_datas, safetensors_binaries, safetensors_hiddenimports = collect_all('safetensors')
 
+# Explicitly collect dynamic libraries (.so/.dylib) — collect_all sometimes
+# misses transitive native dependencies, especially on Intel macOS
+numpy_dynlibs = collect_dynamic_libs('numpy')
+numpy_core_dynlibs = collect_dynamic_libs('numpy.core')
+numpy_linalg_dynlibs = collect_dynamic_libs('numpy.linalg')
+numpy_fft_dynlibs = collect_dynamic_libs('numpy.fft')
+numpy_random_dynlibs = collect_dynamic_libs('numpy.random')
+
 all_datas = timesfm_datas + torch_datas + numpy_datas + safetensors_datas
-all_binaries = timesfm_binaries + torch_binaries + numpy_binaries + safetensors_binaries
+all_binaries = (
+    timesfm_binaries
+    + torch_binaries
+    + numpy_binaries
+    + safetensors_binaries
+    + numpy_dynlibs
+    + numpy_core_dynlibs
+    + numpy_linalg_dynlibs
+    + numpy_fft_dynlibs
+    + numpy_random_dynlibs
+)
 all_hiddenimports = (
     timesfm_hiddenimports
     + torch_hiddenimports
     + numpy_hiddenimports
     + safetensors_hiddenimports
+    + collect_submodules('numpy')
+    + collect_submodules('numpy.core')
+    + collect_submodules('numpy.linalg')
+    + collect_submodules('numpy.fft')
+    + collect_submodules('numpy.random')
     + collect_submodules('uvicorn')
     + collect_submodules('fastapi')
     + collect_submodules('pydantic')
@@ -26,11 +53,13 @@ all_hiddenimports = (
     + collect_submodules('google_auth_oauthlib')
     + [
         'gcp_service', 'pandas', 'db_dtypes', 'pandas_gbq',
-        # numpy internals often missed by collect_all on Intel
+        # numpy core native extensions — critical for "Numpy is available"
         'numpy.core._multiarray_umath',
         'numpy.core._multiarray_tests',
         'numpy.core._dtype_ctypes',
         'numpy.core._internal',
+        'numpy.core._methods',
+        'numpy.core._exceptions',
         'numpy.linalg._umath_linalg',
         'numpy.linalg.lapack_lite',
         'numpy.fft._pocketfft_internal',
@@ -42,6 +71,10 @@ all_hiddenimports = (
         'numpy.random._sfc64',
         'numpy.random._generator',
         'numpy.random.mtrand',
+        'numpy.random.bit_generator',
+        # numpy._distributor_init handles BLAS/LAPACK library loading
+        'numpy._distributor_init',
+        'numpy._pytesttester',
     ]
 )
 
@@ -53,7 +86,7 @@ a = Analysis(
     hiddenimports=all_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['hooks/rthook_numpy.py'],
     excludes=[],
     noarchive=False,
     cipher=block_cipher,
