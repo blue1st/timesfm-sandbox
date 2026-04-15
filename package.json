@@ -24,7 +24,7 @@
       "identity": null,
       "forceCodeSigning": false
     },
-    "afterPack": "./scripts/afterPack.js",
+    "afterPack": "./scripts/afterPack.cjs",
     "extraResources": [
       {
         "from": "backend/dist/server",
