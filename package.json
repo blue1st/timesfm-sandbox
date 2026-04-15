@@ -20,7 +20,7 @@
         "target": "default"
       },
       "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "TimesFM-Sandbox-${version}-${arch}.${ext}",
       "identity": null,
       "forceCodeSigning": false
     },
