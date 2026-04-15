@@ -48,7 +48,7 @@ function App() {
   const [eventStartInput, setEventStartInput] = useState('');
   const [eventEndInput, setEventEndInput] = useState('');
   
-  const [backendStatus, setBackendStatus] = useState<{status: string, message: string}>({status: 'idle', message: 'Checking backend...'});
+  const [backendStatus, setBackendStatus] = useState<{status: string, message: string, model_id?: string}>({status: 'idle', message: 'Checking backend...'});
 
   useEffect(() => {
     document.title = `TimesFM Sandbox v${packageJson.version}`;
