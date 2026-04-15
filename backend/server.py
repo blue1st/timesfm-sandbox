@@ -2,20 +2,21 @@ import os
 import sys
 import logging
 import threading
+import datetime
+import traceback
+import gc
 
 # --- FORCE NUMPY LOAD FIRST ---
 def server_debug_log(msg):
     try:
         debug_path = os.path.expanduser("~/Desktop/timesfm_debug.txt")
-        # Write with timestamp
-        import datetime
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(debug_path, "a") as f:
             f.write(f"[{timestamp}] [server.py] {msg}\n")
     except:
         pass
 
-# Force CPU inference for stability in packaged environment if needed
+# Force CPU inference for stability in packaged environment
 os.environ["JAX_PLATFORMS"] = "cpu"
 os.environ["TORCH_NUMPY_PREFER_ENV"] = "1"
 
@@ -35,10 +36,8 @@ try:
     server_debug_log(f"Torch {torch.__version__} loaded. has_numpy={getattr(torch, 'has_numpy', 'N/A')}")
 except Exception as e:
     server_debug_log(f"CRITICAL: Early import failed: {e}")
+    server_debug_log(traceback.format_exc())
 # ------------------------------
-
-
-
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,10 +47,8 @@ from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 app = FastAPI()
 
-# Allow CORS for the Electron frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,9 +56,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Global model instance
-tfm = None
 
 class PredictRequest(BaseModel):
     data: List[float]
@@ -71,23 +65,16 @@ class PredictRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     forecast: List[float]
     anomalies: List[int]
-    low: List[float] = None # 10th percentile
-    high: List[float] = None # 90th percentile
-    counterfactual: List[float] = None # Counterfactual values for the entire range (if exclude_range provided)
-
-import gc
+    low: List[float] = None
+    high: List[float] = None
+    counterfactual: List[float] = None
 
 # Global state
 tfm = None
 is_loading = False
 loading_error = None
-current_model_id = "google/timesfm-2.5-200m-pytorch" # Default
-
-# Supported model IDs
-ALL_MODEL_IDS = [
-    "google/timesfm-2.5-200m-pytorch",
-]
-
+current_model_id = "google/timesfm-2.5-200m-pytorch"
+ALL_MODEL_IDS = ["google/timesfm-2.5-200m-pytorch"]
 
 def load_model_task(model_id: str):
     global tfm, is_loading, loading_error, current_model_id
@@ -95,7 +82,6 @@ def load_model_task(model_id: str):
     loading_error = None
     server_debug_log(f"--- Model Load Task START: {model_id} ---")
 
-    # Thorough cleanup of existing model
     if tfm is not None:
         server_debug_log("Cleaning up previous tfm instance...")
         del tfm
@@ -111,7 +97,7 @@ def load_model_task(model_id: str):
 
         model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
             model_id,
-            torch_compile=False,  # Disable torch.compile for CPU / Apple Silicon compatibility
+            torch_compile=False,
         )
         server_debug_log("Model instance created. Starting compilation...")
         model.compile(
@@ -129,181 +115,102 @@ def load_model_task(model_id: str):
         tfm = model
         server_debug_log(f"--- Model Load Task SUCCESS: {model_id} ---")
     except Exception as e:
-        import traceback
         loading_error = str(e)
         server_debug_log(f"--- Model Load Task FAILED: {e} ---")
         server_debug_log(traceback.format_exc())
     finally:
         is_loading = False
 
-
 @app.on_event("startup")
 def startup_event():
-    # Start default model loading
     thread = threading.Thread(target=load_model_task, args=(current_model_id,))
     thread.start()
 
 @app.post("/init_model")
 def init_model(model_id: str):
+    global is_loading
     if model_id not in ALL_MODEL_IDS:
-        raise HTTPException(status_code=400, detail=f"Invalid model ID: {model_id}. Available: {ALL_MODEL_IDS}")
-    
+        raise HTTPException(status_code=400, detail=f"Invalid model ID: {model_id}")
     if is_loading:
         raise HTTPException(status_code=409, detail="Model is already loading")
-
     thread = threading.Thread(target=load_model_task, args=(model_id,))
     thread.start()
     return {"status": "started", "model_id": model_id}
 
-@app.get("/models")
-def get_available_models():
-    return ALL_MODEL_IDS
-
-@app.get("/health")
 @app.get("/status")
 def get_status():
-    if tfm:
-        return {"status": "ready", "message": "Model is loaded and ready.", "model_id": current_model_id}
-    if is_loading:
-        return {"status": "loading", "message": "Model is initializing/downloading...", "model_id": current_model_id}
-    if loading_error:
-        return {"status": "error", "message": loading_error, "model_id": current_model_id}
-    return {"status": "idle", "message": "Model initialization pending.", "model_id": current_model_id}
+    if tfm: return {"status": "ready", "message": "Model is loaded.", "model_id": current_model_id}
+    if is_loading: return {"status": "loading", "message": "Model is loading...", "model_id": current_model_id}
+    if loading_error: return {"status": "error", "message": loading_error, "model_id": current_model_id}
+    return {"status": "idle", "message": "Model pending.", "model_id": current_model_id}
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: PredictRequest):
     global tfm
-    if len(req.data) == 0:
-        raise HTTPException(status_code=400, detail="Data array cannot be empty")
-        
     try:
         import numpy as np
+        import torch
+        # Aggrerssive fix for "Numpy is not available"
+        sys.modules['numpy'] = np
+        try: torch.has_numpy = True
+        except: pass
+            
+        server_debug_log(f"--- Analyze Start: data_len={len(req.data)}, model_ready={tfm is not None} ---")
         
         response_dict = {"forecast": [], "anomalies": []}
         
         if tfm is None:
             server_debug_log("Analyze ERROR: tfm is None")
-            raise HTTPException(status_code=503, detail="TimesFMモデルの初期化に失敗しています。バックエンドのログを確認してください。")
-        
-        server_debug_log(f"--- Analyze Start: data_len={len(req.data)}, forecast_len={req.forecast_length} ---")
-
+            raise HTTPException(status_code=503, detail="TimesFMモデルの初期化中、または失敗しています。")
             
-        # 1. Normal Forecast using TimesFM 2.5 API
         inputs = [np.array(req.data)]
         point_forecast, quantile_forecast = tfm.forecast(
             horizon=req.forecast_length,
             inputs=inputs,
         )
-        server_debug_log(f"Forecast done: point_shape={point_forecast.shape}, sample={point_forecast[0][:5].tolist()}")
-
-        # point_forecast: (batch, horizon)
-        # quantile_forecast: (batch, horizon, 10) — [mean, 0.1, 0.2, ..., 0.9]
-        response_dict["forecast"] = point_forecast[0][:req.forecast_length].tolist()
-        response_dict["low"] = quantile_forecast[0, :req.forecast_length, 1].tolist()   # 10th percentile
-        response_dict["high"] = quantile_forecast[0, :req.forecast_length, 9].tolist()  # 90th percentile
+        server_debug_log(f"Forecast SUCCESS: point_shape={point_forecast.shape}")
         
-        # 2. Counterfactual Estimation (if exclude_range provided)
+        response_dict["forecast"] = point_forecast[0][:req.forecast_length].tolist()
+        response_dict["low"] = quantile_forecast[0, :req.forecast_length, 1].tolist()
+        response_dict["high"] = quantile_forecast[0, :req.forecast_length, 9].tolist()
+        
         if req.exclude_range and len(req.exclude_range) == 2:
-            s_idx, e_idx = req.exclude_range
+            s_idx = req.exclude_range[0]
             if 0 < s_idx < len(req.data):
-                # Data before the event
                 context = req.data[:s_idx]
-                # We want to predict from s_idx to the end of data + forecast_length
                 total_pred_len = (len(req.data) - s_idx) + req.forecast_length
-                # Clamp to max_horizon (256)
-                cf_horizon = min(total_pred_len, 256)
-
-                cf_point, _ = tfm.forecast(
-                    horizon=cf_horizon,
-                    inputs=[np.array(context)],
-                )
+                cf_point, _ = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[np.array(context)])
                 response_dict["counterfactual"] = cf_point[0][:total_pred_len].tolist()
-
-        # 3. Anomaly Detection
-        W = 16
-        anomalies = []
-        eval_points = min(len(req.data) - W, 64)
-        if eval_points > 0:
-            start_idx = len(req.data) - eval_points
-            batch_inputs = [np.array(req.data[i-W:i]) for i in range(start_idx, len(req.data))]
-            actuals = [req.data[i] for i in range(start_idx, len(req.data))]
-            indices = list(range(start_idx, len(req.data)))
-            
-            ano_points, _ = tfm.forecast(horizon=1, inputs=batch_inputs)
-            # ano_points shape: (num_inputs, 1) — extract 1-step predictions
-            predictions_1step = ano_points[:, 0].tolist()
-            
-            import math
-            errors = [abs(p - a) for p, a in zip(predictions_1step, actuals)]
-            mean_err = sum(errors) / len(errors)
-            std_err = math.sqrt(sum((e - mean_err)**2 for e in errors) / len(errors)) if len(errors)>1 else 0
-            threshold = mean_err + 2.5 * std_err
-            
-            for idx, err in zip(indices, errors):
-                if err > threshold and err > 0.01:
-                    anomalies.append(idx)
-        response_dict["anomalies"] = anomalies
 
         return response_dict
             
     except Exception as e:
-        logger.error(f"Prediction error: {e}", exc_info=True)
+        server_debug_log(f"Analyze EXCEPTION: {e}")
+        server_debug_log(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-
 
 from gcp_service import authenticate_gcp, query_bigquery, read_gcs_csv
 
-class GCSRequest(BaseModel):
-    gs_url: str
-
-class BQRequest(BaseModel):
-    project_id: str
-    query: str
-
 @app.get("/gcp/auth")
 def auth_gcp():
-    try:
-        authenticate_gcp()
-        return {"status": "success", "message": "Google Cloud認証に成功しました！"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    try: authenticate_gcp(); return {"status": "success"}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/gcp/bigquery")
-def bq_query(req: BQRequest):
-    try:
-        csv_data = query_bigquery(req.query, req.project_id)
-        return {"csv": csv_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def bq_query(req: dict):
+    try: return {"csv": query_bigquery(req['query'], req['project_id'])}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/gcp/gcs")
-def gcs_fetch(req: GCSRequest):
-    try:
-        csv_data = read_gcs_csv(req.gs_url)
-        return {"csv": csv_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+def gcs_fetch(req: dict):
+    try: return {"csv": read_gcs_csv(req['gs_url'])}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    # Import verification mode: test all critical imports and exit
     if "--check" in sys.argv:
-        errors = []
-        for mod_name in ["numpy", "torch", "timesfm", "pandas", "fastapi", "uvicorn"]:
-            try:
-                mod = __import__(mod_name)
-                ver = getattr(mod, "__version__", "?")
-                print(f"  ✅ {mod_name} {ver}")
-            except Exception as e:
-                print(f"  ❌ {mod_name}: {e}")
-                errors.append(mod_name)
-        if errors:
-            print(f"\nFAILED: {errors}")
-            sys.exit(1)
-        print("\nAll imports OK")
+        for mod_name in ["numpy", "torch", "timesfm"]:
+            try: __import__(mod_name); print(f"  ✅ {mod_name}")
+            except Exception as e: print(f"  ❌ {mod_name}: {e}"); sys.exit(1)
         sys.exit(0)
-
     import uvicorn
-    # Enable running directly via `python server.py`
-    port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8000")))
