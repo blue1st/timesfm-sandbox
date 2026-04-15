@@ -9,6 +9,17 @@ import { processCSV } from './lib/duckdb';
 import { analyzeTimeSeries } from './lib/transformers';
 import './index.css';
 
+const getBackendUrl = async () => {
+  // @ts-ignore
+  if (window.require) {
+    // @ts-ignore
+    const { ipcRenderer } = window.require('electron');
+    const port = await ipcRenderer.invoke('get-port');
+    return `http://127.0.0.1:${port}`;
+  }
+  return 'http://127.0.0.1:8000';
+};
+
 interface DataPoint {
   index: number | string;
   value: number;
@@ -56,7 +67,8 @@ function App() {
     // Poll backend status
     const checkStatus = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8000/status');
+        const baseUrl = await getBackendUrl();
+        const res = await fetch(`${baseUrl}/status`);
         const data = await res.json();
         setBackendStatus(prev => {
           // If status just changed from loading to ready, and we have data, we might want to trigger re-analysis
@@ -340,8 +352,9 @@ function App() {
 
   const handleGCPAuth = async () => {
     try {
-      setStatus('Waiting for Google Auth in browser...');
-      const response = await fetch('http://127.0.0.1:8000/gcp/auth');
+      setStatus('Wait for Google Auth in browser...');
+      const baseUrl = await getBackendUrl();
+      const response = await fetch(`${baseUrl}/gcp/auth`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Auth failed');
       setIsAuthenticated(true);
@@ -357,7 +370,8 @@ function App() {
     try {
       setIsProcessing(true);
       setStatus('Loading from GCS...');
-      const response = await fetch('http://127.0.0.1:8000/gcp/gcs', {
+      const baseUrl = await getBackendUrl();
+      const response = await fetch(`${baseUrl}/gcp/gcs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gs_url: gsUrl })
@@ -377,7 +391,8 @@ function App() {
     try {
       setIsProcessing(true);
       setStatus('Executing BigQuery...');
-      const response = await fetch('http://127.0.0.1:8000/gcp/bigquery', {
+      const baseUrl = await getBackendUrl();
+      const response = await fetch(`${baseUrl}/gcp/bigquery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: bqProject, query: bqQuery })
@@ -779,7 +794,8 @@ function App() {
                   try {
                     const modelId = e.target.value;
                     setBackendStatus(prev => ({ ...prev, status: 'loading', message: `Switching to ${modelId}...` }));
-                    await fetch(`http://127.0.0.1:8000/init_model?model_id=${encodeURIComponent(modelId)}`, { method: 'POST' });
+                    const baseUrl = await getBackendUrl();
+                    await fetch(`${baseUrl}/init_model?model_id=${encodeURIComponent(modelId)}`, { method: 'POST' });
                   } catch (err) {
                     console.error("Failed to switch model:", err);
                   }

@@ -148,70 +148,86 @@ def get_status():
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: PredictRequest):
     global tfm
-    # Log as the VERY FIRST thing in the function
-    server_debug_log(f"--- Analyze Endpoint Hit START: req_data_len={len(req.data)} ---")
+    server_debug_log(f"--- Analyze START: data_len={len(req.data)} ---")
     
     try:
         import numpy as np
         import torch
-        # Aggrerssive fix for "Numpy is not available"
         sys.modules['numpy'] = np
         try: torch.has_numpy = True
         except: pass
             
-        server_debug_log(f"--- Inference Execution Begin: model_ready={tfm is not None} ---")
-        
-        response_dict = {"forecast": [], "anomalies": []}
-        
         if tfm is None:
             server_debug_log("Analyze ERROR: tfm is None")
-            raise HTTPException(status_code=503, detail="TimesFMモデルの初期化中、または失敗しています。")
+            raise HTTPException(status_code=503, detail="Model not initialized")
             
-        # 1. Forecast
+        # 1. Main Forecast
         inputs = [np.array(req.data)]
         point_forecast, quantile_forecast = tfm.forecast(
             horizon=req.forecast_length,
             inputs=inputs,
         )
-        server_debug_log(f"Forecast SUCCESS: point_shape={point_forecast.shape}")
+        server_debug_log(f"Inference SUCCESS: point_shape={point_forecast.shape}")
         
-        response_dict["forecast"] = point_forecast[0][:req.forecast_length].tolist()
-        response_dict["low"] = quantile_forecast[0, :req.forecast_length, 1].tolist()
-        response_dict["high"] = quantile_forecast[0, :req.forecast_length, 9].tolist()
-        
-        # 2. Counterfactual
+        # Convert to list and clean NaNs
+        def clean_list(arr):
+            lst = arr.tolist()
+            return [0.0 if (x is None or (not isinstance(x, str) and (x != x or x == float('inf') or x == float('-inf')))) else x for x in lst]
+
+        forecast_list = clean_list(point_forecast[0][:req.forecast_length])
+        low_list = clean_list(quantile_forecast[0, :req.forecast_length, 1])
+        high_list = clean_list(quantile_forecast[0, :req.forecast_length, 9])
+
+        response_dict = {
+            "forecast": forecast_list,
+            "low": low_list,
+            "high": high_list,
+            "anomalies": [],
+            "counterfactual": None
+        }
+        server_debug_log("Main forecast converted to list.")
+
+        # 2. Counterfactual (Optional)
         if req.exclude_range and len(req.exclude_range) == 2:
             s_idx = req.exclude_range[0]
             if 0 < s_idx < len(req.data):
+                server_debug_log(f"Counterfactual start: s_idx={s_idx}")
                 context = req.data[:s_idx]
                 total_pred_len = (len(req.data) - s_idx) + req.forecast_length
                 cf_point, _ = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[np.array(context)])
-                response_dict["counterfactual"] = cf_point[0][:total_pred_len].tolist()
+                response_dict["counterfactual"] = clean_list(cf_point[0][:total_pred_len])
+                server_debug_log("Counterfactual finished.")
 
-        # 3. Anomaly Detection (Restored)
-        W = 16
-        anomalies = []
-        eval_points = min(len(req.data) - W, 64)
-        if eval_points > 0:
-            start_idx = len(req.data) - eval_points
-            batch_inputs = [np.array(req.data[i-W:i]) for i in range(start_idx, len(req.data))]
-            actuals = [req.data[i] for i in range(start_idx, len(req.data))]
-            indices = list(range(start_idx, len(req.data)))
-            
-            ano_points, _ = tfm.forecast(horizon=1, inputs=batch_inputs)
-            predictions_1step = ano_points[:, 0].tolist()
-            
-            import math
-            errors = [abs(p - a) for p, a in zip(predictions_1step, actuals)]
-            mean_err = sum(errors) / len(errors)
-            std_err = math.sqrt(sum((e - mean_err)**2 for e in errors) / len(errors)) if len(errors)>1 else 0
-            threshold = mean_err + 2.5 * std_err
-            
-            for idx, err in zip(indices, errors):
-                if err > threshold and err > 0.01:
-                    anomalies.append(idx)
-        response_dict["anomalies"] = anomalies
+        # 3. Anomaly Detection (with safety block)
+        try:
+            W = 16
+            eval_points = min(len(req.data) - W, 64)
+            if eval_points > 0:
+                server_debug_log(f"Anomaly detection start: eval_points={eval_points}")
+                start_idx = len(req.data) - eval_points
+                batch_inputs = [np.array(req.data[i-W:i]) for i in range(start_idx, len(req.data))]
+                actuals = [req.data[i] for i in range(start_idx, len(req.data))]
+                indices = list(range(start_idx, len(req.data)))
+                
+                ano_points, _ = tfm.forecast(horizon=1, inputs=batch_inputs)
+                predictions_1step = ano_points[:, 0].tolist()
+                
+                import math
+                errors = [abs(p - a) for p, a in zip(predictions_1step, actuals)]
+                mean_err = sum(errors) / len(errors)
+                std_err = math.sqrt(sum((e - mean_err)**2 for e in errors) / len(errors)) if len(errors)>1 else 0
+                threshold = mean_err + 2.5 * std_err
+                
+                anomalies = []
+                for idx, err in zip(indices, errors):
+                    if err > threshold and err > 0.01:
+                        anomalies.append(idx)
+                response_dict["anomalies"] = anomalies
+                server_debug_log(f"Anomaly detection SUCCESS: count={len(anomalies)}")
+        except Exception as e:
+            server_debug_log(f"Anomaly detection WARNING (skipped): {e}")
 
+        server_debug_log("--- Response ready to return ---")
         return response_dict
             
     except Exception as e:
@@ -237,10 +253,5 @@ def gcs_fetch(req: dict):
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    if "--check" in sys.argv:
-        for mod_name in ["numpy", "torch", "timesfm"]:
-            try: __import__(mod_name); print(f"  ✅ {mod_name}")
-            except Exception as e: print(f"  ❌ {mod_name}: {e}"); sys.exit(1)
-        sys.exit(0)
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8000")))

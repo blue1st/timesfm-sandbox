@@ -1,23 +1,14 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import { createServer } from 'node:net'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// The built directory structure
-//
-// ├─┬─┬ dist
-// │ │ └── index.html
-// │ │
-// │ ├─┬ dist-electron
-// │ │ ├── main.js
-// │ │ └── preload.js
-// │
 process.env.APP_ROOT = path.join(__dirname, '..')
 
-// 🚧 Use ['ENV_NAME'] avoid vite:define plugin - Vite@2.x
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
@@ -26,31 +17,39 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 
 let win: BrowserWindow | null
 let pythonProcess: any = null
+let backendPort: number = 8000 // Default fallback
 
-function startPythonBackend() {
+// Helper to find a free port
+async function getFreePort(): Promise<number> {
+  return new Promise((resolve) => {
+    const server = createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const port = (server.address() as any).port
+      server.close(() => resolve(port))
+    })
+  })
+}
+
+async function startPythonBackend() {
+  backendPort = await getFreePort();
+  console.log(`Assigned dynamic port: ${backendPort}`);
+
   const isPackaged = app.isPackaged;
   let backendPath: string;
   
+  const env = { ...process.env, PORT: backendPort.toString() };
+
   if (isPackaged) {
-    // When packaged, the backend is built by PyInstaller (onedir) and placed in extraResources (Resources/backend)
     backendPath = path.join(process.resourcesPath, 'backend', 'server');
-    
-    if (!fs.existsSync(backendPath)) {
-      console.error(`Backend binary not found at: ${backendPath}`);
-    }
-    
-    console.log(`Spawning packaged backend: ${backendPath}`);
-    pythonProcess = spawn(backendPath, [], { stdio: 'pipe' });
+    console.log(`Spawning packaged backend: ${backendPath} on port ${backendPort}`);
+    pythonProcess = spawn(backendPath, [], { env, stdio: 'pipe' });
   } else {
-    // In dev mode, spawn using local python environment
     const scriptPath = path.join(process.env.APP_ROOT, 'backend', 'server.py');
     const venvPythonPath = path.join(process.env.APP_ROOT, 'venv', 'bin', 'python');
-    
-    // Prefer venv python if it exists, otherwise fallback to system 'python'
     const pythonExe = fs.existsSync(venvPythonPath) ? venvPythonPath : 'python';
     
-    console.log(`Spawning dev backend: ${pythonExe} ${scriptPath}`);
-    pythonProcess = spawn(pythonExe, [scriptPath], { stdio: 'pipe' });
+    console.log(`Spawning dev backend: ${pythonExe} ${scriptPath} on port ${backendPort}`);
+    pythonProcess = spawn(pythonExe, [scriptPath], { env, stdio: 'pipe' });
   }
 
   pythonProcess.on('error', (err: Error) => {
@@ -81,10 +80,12 @@ function createWindow() {
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
   } else {
-    // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
 }
+
+// IPC handler to return the backend port
+ipcMain.handle('get-port', () => backendPort)
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -105,7 +106,7 @@ app.on('will-quit', () => {
   }
 })
 
-app.whenReady().then(() => {
-  startPythonBackend()
+app.whenReady().then(async () => {
+  await startPythonBackend()
   createWindow()
 })

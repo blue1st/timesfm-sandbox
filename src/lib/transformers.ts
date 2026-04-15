@@ -1,3 +1,14 @@
+const getBackendUrl = async () => {
+  // @ts-ignore
+  if (window.require) {
+    // @ts-ignore
+    const { ipcRenderer } = window.require('electron');
+    const port = await ipcRenderer.invoke('get-port');
+    return `http://127.0.0.1:${port}`;
+  }
+  return 'http://127.0.0.1:8000'; // Fallback
+};
+
 export async function analyzeTimeSeries(
   data: number[], 
   forecastLength: number = 20, 
@@ -5,9 +16,10 @@ export async function analyzeTimeSeries(
 ): Promise<{forecast: number[], anomalies: number[], low?: number[], high?: number[], counterfactual?: number[]}> {
   console.log("Requesting TimesFM analysis from Python Backend...");
   
+  const baseUrl = await getBackendUrl();
   let response;
   try {
-    response = await fetch('http://127.0.0.1:8000/analyze', {
+    response = await fetch(`${baseUrl}/analyze`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
