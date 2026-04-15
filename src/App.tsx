@@ -52,6 +52,10 @@ function App() {
   const [eventEndInput, setEventEndInput] = useState('');
   const [sensitivity, setSensitivity] = useState(2.5);
   
+  // Zoom state
+  const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  
   const [backendStatus, setBackendStatus] = useState<{status: string, message: string, model_id?: string}>({status: 'idle', message: 'Checking backend...'});
 
   useEffect(() => {
@@ -160,9 +164,58 @@ function App() {
     setSelectedValueCol('');
     setSelectedEventCol('');
     setSelectionRange(null);
+    setZoomRange(null);
     setStatus('Idle');
     setPastedText('');
     setIsProcessing(false);
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    // Only zoom if we have data
+    if (data.length < 5) return;
+    
+    // Alt + Scroll or just Scroll? Let's use standard Scroll but check if it's horizontal or vertical
+    // On many laptops, deltaY is zoom-like for wheel.
+    if (Math.abs(e.deltaY) < 1) return;
+    
+    e.preventDefault();
+    
+    const currentRange = zoomRange || [0, data.length - 1];
+    const rangeLength = currentRange[1] - currentRange[0];
+    const zoomFactor = 0.1;
+    
+    const direction = e.deltaY > 0 ? 1 : -1; // 1 = Zoom Out, -1 = Zoom In
+    
+    // Zoom centered on hovered index or middle if not hovered
+    const targetIdx = hoveredIndex !== null ? hoveredIndex : (currentRange[0] + rangeLength / 2);
+    
+    // Relative position of target in current view (0 to 1)
+    const relPos = (targetIdx - currentRange[0]) / (rangeLength || 1);
+    
+    let newRangeLength = rangeLength * (1 + direction * zoomFactor);
+    
+    // Constraints
+    if (newRangeLength < 5) newRangeLength = 5;
+    if (newRangeLength > data.length - 1) {
+      setZoomRange(null);
+      return;
+    }
+    
+    // Calculate new start/end based on relative position
+    let newStart = targetIdx - newRangeLength * relPos;
+    let newEnd = newStart + newRangeLength;
+    
+    // Correct bounds
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = newRangeLength;
+    }
+    if (newEnd > data.length - 1) {
+      newEnd = data.length - 1;
+      newStart = newEnd - newRangeLength;
+    }
+    
+    setZoomRange([Math.round(newStart), Math.round(newEnd)]);
   };
 
   const handleDataInput = async (content: string) => {
@@ -402,13 +455,22 @@ function App() {
 
   const handleChartMouseDown = (e: any) => {
     if (e && e.activeTooltipIndex !== undefined) {
-      setRefAreaLeft(e.activeTooltipIndex);
+      const indexInVisible = e.activeTooltipIndex;
+      const actualIndex = zoomRange ? zoomRange[0] + indexInVisible : indexInVisible;
+      setRefAreaLeft(actualIndex);
     }
   };
 
   const handleChartMouseMove = (e: any) => {
-    if (refAreaLeft !== null && e && e.activeTooltipIndex !== undefined) {
-      setRefAreaRight(e.activeTooltipIndex);
+    if (e && e.activeTooltipIndex !== undefined) {
+      // Map activeTooltipIndex from visibleData back to the original data index if we're zoomed
+      const indexInVisible = e.activeTooltipIndex;
+      const actualIndex = zoomRange ? zoomRange[0] + indexInVisible : indexInVisible;
+      setHoveredIndex(actualIndex);
+      
+      if (refAreaLeft !== null) {
+        setRefAreaRight(actualIndex);
+      }
     }
   };
 
@@ -448,6 +510,24 @@ function App() {
     }
   });
   if (currentEvent) eventAreas.push(currentEvent);
+
+  // Process data for the chart
+  const chartSlice = zoomRange ? data.slice(zoomRange[0], zoomRange[1] + 1) : data;
+  const processedChartData = chartSlice.map((d, i) => {
+    // We need to check against the full data to know if it's the last observed
+    // Find actual index in original data
+    const actualIdx = zoomRange ? zoomRange[0] + i : i;
+    const isLastObserved = !d.is_prediction && data[actualIdx + 1]?.is_prediction;
+    return {
+      ...d,
+      actual_value: !d.is_prediction ? d.value : null,
+      predicted_value: d.is_prediction ? d.value : (isLastObserved ? d.value : null),
+      anomaly_value: d.is_anomaly ? d.value : null,
+      pred_interval: d.is_prediction && d.low !== undefined && d.high !== undefined 
+        ? [d.low, d.high] 
+        : (isLastObserved ? [d.value, d.value] : null)
+    };
+  });
 
   return (
     <div className="app-container">
@@ -830,10 +910,10 @@ function App() {
                   <span>NORMAL(2.5)</span>
                   <span>STRICT</span>
                 </div>
-              </div>
             </div>
           </div>
-        </aside>
+        </div>
+      </aside>
         
         <main className="glass-card chart-container fade-in" style={{ animationDelay: '0.1s' }}>
           <div className="chart-header">
@@ -851,9 +931,16 @@ function App() {
                 </button>
               )}
               {data.length > 0 && (
-                <button className="btn text-sm px-3 py-1.5 bg-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.2)] border border-[#334155] flex items-center gap-2" onClick={exportToCSV}>
-                  <Download className="w-4 h-4" /> Export CSV
-                </button>
+                <>
+                  {zoomRange && (
+                    <button className="btn text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-200 flex items-center gap-2" onClick={() => setZoomRange(null)}>
+                      Reset Zoom
+                    </button>
+                  )}
+                  <button className="btn text-sm px-3 py-1.5 bg-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.2)] border border-[#334155] flex items-center gap-2" onClick={exportToCSV}>
+                    <Download className="w-4 h-4" /> Export CSV
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -899,25 +986,20 @@ function App() {
                 )}
               </div>
 
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart
-                  data={data.map((d, i) => {
-                    const isLastObserved = !d.is_prediction && data[i + 1]?.is_prediction;
-                    return {
-                      ...d,
-                      actual_value: !d.is_prediction ? d.value : null,
-                      predicted_value: d.is_prediction ? d.value : (isLastObserved ? d.value : null),
-                      anomaly_value: d.is_anomaly ? d.value : null,
-                      pred_interval: d.is_prediction && d.low !== undefined && d.high !== undefined 
-                        ? [d.low, d.high] 
-                        : (isLastObserved ? [d.value, d.value] : null)
-                    };
-                  })}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-                  onMouseDown={handleChartMouseDown}
-                  onMouseMove={handleChartMouseMove}
-                  onMouseUp={handleChartMouseUp}
-                >
+              <div 
+                className="w-full flex-1" 
+                style={{ minHeight: 0 }}
+                onWheel={handleWheel}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart
+                    data={processedChartData}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                    onMouseDown={handleChartMouseDown}
+                    onMouseMove={handleChartMouseMove}
+                    onMouseUp={handleChartMouseUp}
+                    onMouseLeave={() => setHoveredIndex(null)}
+                  >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
                   <XAxis 
                     dataKey="index" 
@@ -1034,6 +1116,7 @@ function App() {
                   })}
                 </ComposedChart>
               </ResponsiveContainer>
+            </div>
               <div className="flex gap-4 mt-4 text-sm justify-center flex-wrap shrink-0">
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Actual</div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500 border border-violet-500" style={{ borderStyle: 'dotted' }}></div> Forecast</div>
