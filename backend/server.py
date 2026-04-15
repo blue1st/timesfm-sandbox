@@ -2,6 +2,23 @@ import os
 import sys
 import logging
 import threading
+
+# --- FORCE NUMPY LOAD FIRST ---
+def server_debug_log(msg):
+    try:
+        with open(os.path.expanduser("~/Desktop/timesfm_debug.txt"), "a") as f:
+            f.write(f"[server.py] {msg}\n")
+    except:
+        pass
+
+try:
+    import numpy as np
+    sys.modules['numpy'] = np
+    server_debug_log(f"Numpy {np.__version__} loaded successfully from {np.__file__}")
+except Exception as e:
+    server_debug_log(f"CRITICAL: Numpy import failed: {e}")
+# ------------------------------
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,14 +27,6 @@ from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Early numpy diagnostic — surfaces the real error before torch/timesfm mask it
-try:
-    import numpy as np
-    logger.info(f"numpy {np.__version__} loaded from {np.__file__}")
-except Exception as e:
-    logger.error(f"CRITICAL: numpy import failed: {e}", exc_info=True)
-    logger.error(f"sys.path = {sys.path}")
-    logger.error(f"sys.executable = {sys.executable}")
 
 app = FastAPI()
 
