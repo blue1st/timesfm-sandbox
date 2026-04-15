@@ -51,23 +51,16 @@ jobs:
         run: |
           pip install "numpy<2"
           pip install -r backend/requirements.txt
+          pip install pyinstaller
 
-      - name: Build Python backend
-        uses: Nuitka/Nuitka-Action@main
-        with:
-          nuitka-version: main
-          script-name: backend/server.py
-          mode: standalone
-          enable-plugins: numpy,torch
-          include-package: pandas,timesfm
-          output-dir: build-python/backend
-          lto: "no"
-          jobs: 3
+      - name: Build Python backend with PyInstaller
+        working-directory: backend
+        run: pyinstaller server.spec --clean --noconfirm
 
-      - name: Remove broken symlinks from Nuitka build
+      - name: Verify backend build
         run: |
-          find build-python/backend -type l ! -exec test -e {} \; -delete || true
-          echo "Cleaned broken symlinks from build output"
+          ls -la backend/dist/server/
+          test -f backend/dist/server/server && echo "✅ Backend binary found" || (echo "❌ Backend binary NOT found" && exit 1)
 
       - name: build and release
         env:

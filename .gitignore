@@ -26,5 +26,9 @@ venv
 dist-electron
 release
 build
+build-python
 backend/__pycache__
+backend/build
+backend/dist
+*.spec.bak
 .env

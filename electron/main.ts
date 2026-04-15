@@ -32,17 +32,11 @@ function startPythonBackend() {
   let backendPath: string;
   
   if (isPackaged) {
-    // When packaged, the backend folder is in extraResources (Resources/backend)
+    // When packaged, the backend is built by PyInstaller (onedir) and placed in extraResources (Resources/backend)
     backendPath = path.join(process.resourcesPath, 'backend', 'server');
     
-    // Check if the binary exists, if not, try alternative path (sometimes Nuitka keeps the .dist folder structure)
     if (!fs.existsSync(backendPath)) {
-      const altPath = path.join(process.resourcesPath, 'backend', 'server.dist', 'server');
-      if (fs.existsSync(altPath)) {
-        backendPath = altPath;
-      } else {
-        console.error(`Backend binary not found at:\n1: ${backendPath}\n2: ${altPath}`);
-      }
+      console.error(`Backend binary not found at: ${backendPath}`);
     }
     
     console.log(`Spawning packaged backend: ${backendPath}`);
