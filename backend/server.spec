@@ -22,7 +22,14 @@ numpy_linalg_dynlibs = collect_dynamic_libs('numpy.linalg')
 numpy_fft_dynlibs = collect_dynamic_libs('numpy.fft')
 numpy_random_dynlibs = collect_dynamic_libs('numpy.random')
 
+# Explicitly collect numpy's .libs directory (contains OpenBLAS/MKL)
+import os
+import numpy as np
+numpy_libs_dir = os.path.join(os.path.dirname(np.__file__), ".libs")
 all_datas = timesfm_datas + torch_datas + numpy_datas + safetensors_datas
+if os.path.exists(numpy_libs_dir):
+    all_datas += [(numpy_libs_dir, "numpy/.libs")]
+
 all_binaries = (
     timesfm_binaries
     + torch_binaries
