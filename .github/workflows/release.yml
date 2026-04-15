@@ -49,9 +49,11 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install "numpy<2"
           pip install -r backend/requirements.txt
+          pip install "numpy>=1.24,<2" --force-reinstall --no-deps
           pip install pyinstaller
+          python -c "import numpy; print(f'numpy version: {numpy.__version__}')"
+          python -c "import torch; print(f'torch version: {torch.__version__}')"
 
       - name: Build Python backend with PyInstaller
         working-directory: backend

@@ -10,6 +10,15 @@ from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Early numpy diagnostic — surfaces the real error before torch/timesfm mask it
+try:
+    import numpy as np
+    logger.info(f"numpy {np.__version__} loaded from {np.__file__}")
+except Exception as e:
+    logger.error(f"CRITICAL: numpy import failed: {e}", exc_info=True)
+    logger.error(f"sys.path = {sys.path}")
+    logger.error(f"sys.executable = {sys.executable}")
+
 app = FastAPI()
 
 # Allow CORS for the Electron frontend

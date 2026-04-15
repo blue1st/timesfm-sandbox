@@ -24,7 +24,25 @@ all_hiddenimports = (
     + collect_submodules('google.auth')
     + collect_submodules('google.cloud')
     + collect_submodules('google_auth_oauthlib')
-    + ['gcp_service', 'pandas', 'db_dtypes', 'pandas_gbq']
+    + [
+        'gcp_service', 'pandas', 'db_dtypes', 'pandas_gbq',
+        # numpy internals often missed by collect_all on Intel
+        'numpy.core._multiarray_umath',
+        'numpy.core._multiarray_tests',
+        'numpy.core._dtype_ctypes',
+        'numpy.core._internal',
+        'numpy.linalg._umath_linalg',
+        'numpy.linalg.lapack_lite',
+        'numpy.fft._pocketfft_internal',
+        'numpy.random._common',
+        'numpy.random._bounded_integers',
+        'numpy.random._mt19937',
+        'numpy.random._philox',
+        'numpy.random._pcg64',
+        'numpy.random._sfc64',
+        'numpy.random._generator',
+        'numpy.random.mtrand',
+    ]
 )
 
 a = Analysis(
