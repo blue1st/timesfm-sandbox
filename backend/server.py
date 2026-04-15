@@ -10,9 +10,10 @@ import gc
 def server_debug_log(msg):
     try:
         debug_path = os.path.expanduser("~/Desktop/timesfm_debug.txt")
+        pid = os.getpid()
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(debug_path, "a") as f:
-            f.write(f"[{timestamp}] [server.py] {msg}\n")
+            f.write(f"[{timestamp}] [PID:{pid}] [server.py] {msg}\n")
     except:
         pass
 
@@ -60,7 +61,7 @@ app.add_middleware(
 class PredictRequest(BaseModel):
     data: List[float]
     forecast_length: int = 20
-    exclude_range: List[int] = None # [start_idx, end_idx]
+    exclude_range: List[int] = None
 
 class AnalyzeResponse(BaseModel):
     forecast: List[float]
@@ -147,6 +148,9 @@ def get_status():
 @app.post("/analyze", response_model=AnalyzeResponse)
 def analyze(req: PredictRequest):
     global tfm
+    # Log as the VERY FIRST thing in the function
+    server_debug_log(f"--- Analyze Endpoint Hit START: req_data_len={len(req.data)} ---")
+    
     try:
         import numpy as np
         import torch
@@ -155,7 +159,7 @@ def analyze(req: PredictRequest):
         try: torch.has_numpy = True
         except: pass
             
-        server_debug_log(f"--- Analyze Start: data_len={len(req.data)}, model_ready={tfm is not None} ---")
+        server_debug_log(f"--- Inference Execution Begin: model_ready={tfm is not None} ---")
         
         response_dict = {"forecast": [], "anomalies": []}
         
@@ -163,6 +167,7 @@ def analyze(req: PredictRequest):
             server_debug_log("Analyze ERROR: tfm is None")
             raise HTTPException(status_code=503, detail="TimesFMモデルの初期化中、または失敗しています。")
             
+        # 1. Forecast
         inputs = [np.array(req.data)]
         point_forecast, quantile_forecast = tfm.forecast(
             horizon=req.forecast_length,
@@ -174,6 +179,7 @@ def analyze(req: PredictRequest):
         response_dict["low"] = quantile_forecast[0, :req.forecast_length, 1].tolist()
         response_dict["high"] = quantile_forecast[0, :req.forecast_length, 9].tolist()
         
+        # 2. Counterfactual
         if req.exclude_range and len(req.exclude_range) == 2:
             s_idx = req.exclude_range[0]
             if 0 < s_idx < len(req.data):
@@ -181,6 +187,30 @@ def analyze(req: PredictRequest):
                 total_pred_len = (len(req.data) - s_idx) + req.forecast_length
                 cf_point, _ = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[np.array(context)])
                 response_dict["counterfactual"] = cf_point[0][:total_pred_len].tolist()
+
+        # 3. Anomaly Detection (Restored)
+        W = 16
+        anomalies = []
+        eval_points = min(len(req.data) - W, 64)
+        if eval_points > 0:
+            start_idx = len(req.data) - eval_points
+            batch_inputs = [np.array(req.data[i-W:i]) for i in range(start_idx, len(req.data))]
+            actuals = [req.data[i] for i in range(start_idx, len(req.data))]
+            indices = list(range(start_idx, len(req.data)))
+            
+            ano_points, _ = tfm.forecast(horizon=1, inputs=batch_inputs)
+            predictions_1step = ano_points[:, 0].tolist()
+            
+            import math
+            errors = [abs(p - a) for p, a in zip(predictions_1step, actuals)]
+            mean_err = sum(errors) / len(errors)
+            std_err = math.sqrt(sum((e - mean_err)**2 for e in errors) / len(errors)) if len(errors)>1 else 0
+            threshold = mean_err + 2.5 * std_err
+            
+            for idx, err in zip(indices, errors):
+                if err > threshold and err > 0.01:
+                    anomalies.append(idx)
+        response_dict["anomalies"] = anomalies
 
         return response_dict
             
