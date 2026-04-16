@@ -24,5 +24,4 @@ services:
       - TIMESFM_DEBUG=1
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
-      - ./backend:/app
       - ./backend/data:/app/data
