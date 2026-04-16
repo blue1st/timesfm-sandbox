@@ -16,21 +16,16 @@ echo "Updating Homebrew Cask to version $VERSION"
 
 # We expect DMGs to be downloaded into a directory or current dir
 DMG_ARM=$(find . -name "*-arm64.dmg" -o -name "*_arm64.dmg" -o -name "*_aarch64.dmg" | head -n 1)
-DMG_X64=$(find . -name "*-x64.dmg" -o -name "*_x64.dmg" | head -n 1)
 
-if [ -z "$DMG_ARM" ] || [ -z "$DMG_X64" ]; then
-  echo "Error: Could not find both arm64 and x64 DMG files"
-  echo "ARM: $DMG_ARM"
-  echo "X64: $DMG_X64"
+if [ -z "$DMG_ARM" ]; then
+  echo "Error: Could not find arm64 DMG file"
   ls -la
   exit 1
 fi
 
 SHA256_ARM=$(shasum -a 256 "$DMG_ARM" | awk '{print $1}')
-SHA256_X64=$(shasum -a 256 "$DMG_X64" | awk '{print $1}')
 
 echo "ARM SHA256: $SHA256_ARM"
-echo "X64 SHA256: $SHA256_X64"
 
 # Clone the tap repository
 TMP_DIR=$(mktemp -d)
@@ -44,17 +39,18 @@ CASK_FILE="$TMP_DIR/Casks/${CASK_NAME}.rb"
 # Create or update the Cask file
 cat <<EOF > "$CASK_FILE"
 cask "${CASK_NAME}" do
-  arch arm: "-arm64", intel: "-x64"
   version "${VERSION}"
-  sha256 arm:   "${SHA256_ARM}",
-         intel: "${SHA256_X64}"
+  sha256 "${SHA256_ARM}"
 
-  url "https://github.com/blue1st/timesfm-sandbox/releases/download/v#{version}/TimesFM-Sandbox-#{version}#{arch}.dmg"
+  url "https://github.com/blue1st/timesfm-sandbox/releases/download/v#{version}/TimesFM-Sandbox-#{version}-arm64.dmg"
   name "TimesFM Sandbox"
   desc "Time-Series Forecasting Sandbox based on TimesFM"
   homepage "https://github.com/blue1st/timesfm-sandbox"
 
   app "TimesFM Sandbox.app"
+
+  # Only support Apple Silicon
+  depends_on arch: :arm64
 
   postflight do
     system_command "/usr/bin/xattr",

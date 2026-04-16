@@ -21,8 +21,6 @@ jobs:
         include:
           - os: macos-14
             arch: arm64
-          - os: macos-15-intel
-            arch: x64
     steps:
       - uses: actions/checkout@v6
 
