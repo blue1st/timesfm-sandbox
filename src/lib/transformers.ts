@@ -4,7 +4,8 @@ export async function analyzeTimeSeries(
   data: number[], 
   forecastLength: number = 20, 
   excludeRange?: [number, number],
-  sensitivity: number = 2.5
+  sensitivity: number = 2.5,
+  covariates?: number[]
 ): Promise<{forecast: number[], anomalies: number[], low?: number[], high?: number[], counterfactual?: number[]}> {
   console.log("Requesting TimesFM analysis from Python Backend...");
   
@@ -20,7 +21,8 @@ export async function analyzeTimeSeries(
         data,
         forecast_length: forecastLength,
         exclude_range: excludeRange,
-        anomaly_threshold: sensitivity
+        anomaly_threshold: sensitivity,
+        covariates: covariates
       }),
     });
   } catch (err) {

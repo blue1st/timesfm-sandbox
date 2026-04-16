@@ -21,6 +21,8 @@ services:
     environment:
       - PORT=8000
       - JAX_PLATFORMS=cpu
+      - TIMESFM_DEBUG=1
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./backend:/app
       - ./backend/data:/app/data

@@ -85,12 +85,17 @@ function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Auto-run analysis when backend becomes ready
+  // Debounced re-analysis for all parameter changes
   useEffect(() => {
-    if (backendStatus.status === 'ready' && rawRows.length > 0 && selectedValueCol) {
+    if (!backendStatus.status || backendStatus.status !== 'ready') return;
+    if (rawRows.length === 0 || !selectedValueCol) return;
+
+    const handler = setTimeout(() => {
       runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
-    }
-  }, [backendStatus.status]);
+    }, 500);
+
+    return () => clearTimeout(handler);
+  }, [sensitivity, forecastLength, selectedTimeCol, selectedValueCol, selectedEventCol, rawRows, backendStatus.status]);
   
   const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '', currentSensitivity: number = sensitivity, currentHorizon: number = forecastLength) => {
     try {
@@ -112,11 +117,44 @@ function App() {
         };
       });
       
+      // Extract covariates (Xreg) from events
+      // 1. Map existing indices to event presence
+      const eventMap = new Map<string | number, boolean>();
+      data.forEach(d => {
+        if (d.event_name) eventMap.set(d.index, true);
+      });
+      
+      // 2. Build covariate array for [History + Horizon]
+      const covariates: number[] = [];
+      
+      // Past
+      chartData.forEach((d) => {
+        const hasEvent = d.event_name || eventMap.get(d.index);
+        covariates.push(hasEvent ? 1.0 : 0.0);
+      });
+      
+      // Future
+      const lastPointForInterval = chartData[chartData.length - 1];
+      const prevPointForInterval = chartData[chartData.length - 2];
+      let intervalForCov = 1;
+      let lastIndexForCov = lastPointForInterval ? Number(lastPointForInterval.index) : 0;
+      
+      if (lastPointForInterval && prevPointForInterval) {
+        const lastV = Number(lastPointForInterval.index);
+        const prevV = Number(prevPointForInterval.index);
+        if (!isNaN(lastV) && !isNaN(prevV) && lastV !== prevV) intervalForCov = lastV - prevV;
+      }
+      
+      for (let i = 1; i <= currentHorizon; i++) {
+        const futureIdx = isNaN(lastIndexForCov) ? `Pred ${i}` : lastIndexForCov + (intervalForCov * i);
+        covariates.push(eventMap.get(futureIdx) ? 1.0 : 0.0);
+      }
+      
       setData(chartData);
       
       const valuesArray = chartData.map(d => d.value).filter(v => !isNaN(v));
       
-      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, currentHorizon, undefined, currentSensitivity);
+      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, currentHorizon, undefined, currentSensitivity, covariates);
       
       const chartDataWithAnomalies = chartData.map((item, idx) => ({
         ...item,
@@ -269,8 +307,9 @@ function App() {
       setSelectedValueCol(valColToUse);
       setSelectedEventCol(eventColToUse);
       
-      setStatus('Starting analysis...');
-      await runAnalysis(combinedRows, timeColToUse, valColToUse, eventColToUse);
+      setStatus('Setting up data...');
+      // No need to call runAnalysis here, the useEffect will trigger it 
+      // when rawRows, selectedTimeCol, and selectedValueCol are set.
       
     } catch (error) {
       console.error(error);
@@ -711,9 +750,7 @@ function App() {
                       className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
                       value={selectedTimeCol}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        setSelectedTimeCol(val);
-                        runAnalysis(rawRows, val, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
+                        setSelectedTimeCol(e.target.value);
                       }}
                       disabled={isProcessing}
                     >
@@ -730,9 +767,7 @@ function App() {
                       className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
                       value={selectedValueCol}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        setSelectedValueCol(val);
-                        runAnalysis(rawRows, selectedTimeCol, val, selectedEventCol, sensitivity, forecastLength);
+                        setSelectedValueCol(e.target.value);
                       }}
                       disabled={isProcessing}
                     >
@@ -748,9 +783,7 @@ function App() {
                       className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
                       value={selectedEventCol}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        setSelectedEventCol(val);
-                        runAnalysis(rawRows, selectedTimeCol, selectedValueCol, val, sensitivity, forecastLength);
+                        setSelectedEventCol(e.target.value);
                       }}
                       disabled={isProcessing}
                     >
@@ -923,11 +956,6 @@ function App() {
                     const val = parseFloat(e.target.value);
                     setSensitivity(val);
                   }}
-                  onMouseUp={() => {
-                    if (rawRows.length > 0) {
-                      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
-                    }
-                  }}
                 />
                 <div className="flex justify-between mt-1 text-[8px] text-slate-500 font-mono">
                   <span>SENSITIVE</span>
@@ -950,11 +978,6 @@ function App() {
                   value={forecastLength}
                   onChange={(e) => {
                     setForecastLength(parseInt(e.target.value));
-                  }}
-                  onMouseUp={() => {
-                    if (rawRows.length > 0) {
-                      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
-                    }
                   }}
                 />
                 <div className="flex justify-between mt-1 text-[8px] text-slate-500 font-mono">
