@@ -118,9 +118,9 @@ function App() {
       });
       
       // Extract covariates (Xreg) from events
-      // 1. Map existing indices to event presence
+      // 1. Map current indices to event presence
       const eventMap = new Map<string | number, boolean>();
-      data.forEach(d => {
+      chartData.forEach(d => {
         if (d.event_name) eventMap.set(d.index, true);
       });
       

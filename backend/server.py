@@ -116,13 +116,12 @@ def load_model_task(model_id: str):
         server_debug_log("Model instance created. Starting compilation...")
         model.compile(
             timesfm.ForecastConfig(
-                max_context=1024,
-                max_horizon=64,
-                per_core_batch_size=32,
-                normalize_inputs=False,
+                max_horizon=128, 
+                per_core_batch_size=1, # Single-sequence inference
+                normalize_inputs=True, # Recommended for stability
                 use_continuous_quantile_head=True,
                 force_flip_invariance=True,
-                infer_is_positive=True,
+                infer_is_positive=False, # We handle positivity after denormalization
                 fix_quantile_crossing=True,
                 return_backcast=True,
             )
@@ -172,149 +171,159 @@ def analyze(req: PredictRequest):
             server_debug_log("Analyze ERROR: tfm is None")
             raise HTTPException(status_code=503, detail="Model not initialized")
             
-        # --- 1. Unified Patch Alignment ---
-        # TimesFM 2.5 uses 32-point patches. We unify padding for both paths
-        # to ensure the base model sees the exact same context regardless of XReg.
-        data_len = len(req.data)
-        raw_mean = np.mean(req.data)
-        raw_std = np.std(req.data) if np.std(req.data) > 0 else 1.0
+        # --- 1. Sanitization & Alignment ---
+        # Replace non-finite values with mean
+        cleaned_data = np.array(req.data, dtype=np.float32)
+        finite_mask = np.isfinite(cleaned_data)
+        if not np.all(finite_mask):
+            mean_val = np.mean(cleaned_data[finite_mask]) if np.any(finite_mask) else 0.0
+            cleaned_data[~finite_mask] = mean_val
+            
+        data_len = len(cleaned_data)
+        raw_mean = np.mean(cleaned_data)
+        raw_std = np.std(cleaned_data) if np.std(cleaned_data) > 0 else 1.0
         
-        context_multiple = 64
+        server_debug_log(f"Inference Stats: mean={raw_mean:.2f}, std={raw_std:.2f}")
+
+        # TimesFM 2.5 Torch patching requires context to be a multiple of 32.
+        context_multiple = 32
         pad_len = (context_multiple - data_len % context_multiple) % context_multiple
-        # Pad with edge values
-        padded_data = np.pad(req.data, (pad_len, 0), mode='edge').astype(np.float32)
+        padded_data = np.pad(cleaned_data, (pad_len, 0), mode='edge')
+        total_ctx = len(padded_data)
         
-        # --- MANUAL NORMALIZATION ---
-        norm_padded_data = (padded_data - raw_mean) / raw_std
-        
-        effective_horizon = 64
-        server_debug_log(f"Symmetric Alignment: data_len={data_len}, pad_len={pad_len}, norm_padded_data={norm_padded_data.shape}, effective_horizon={effective_horizon}")
+        effective_horizon = 128 # Multiple of output patch size
+        server_debug_log(f"Alignment: data_len={data_len}, pad_len={pad_len}, total_ctx={total_ctx}")
 
-        if req.covariates and len(req.covariates) >= data_len + req.forecast_length:
-            # --- 2a. XReg Forecast ---
-            additional_horizon_pad = effective_horizon - req.forecast_length
-            
-            # CRITICAL: Official demo and xreg_lib expect 1D arrays in the list.
-            # xreg_lib adds the [:, np.newaxis] internally.
-            cov_arr_1d = np.array(req.covariates).flatten().astype(np.float32)
-            # Pad the 1D array
-            full_padded_cov_1d = np.pad(cov_arr_1d, (pad_len, additional_horizon_pad), mode='edge')
-            
-            server_debug_log(f"XReg Input Check (1D): padded_data={padded_data.shape}, full_padded_cov_1d={full_padded_cov_1d.shape}")
-            
-            dynamic_cov = {"event": [full_padded_cov_1d]}
-            point_forecast, quantile_forecast = tfm.forecast_with_covariates(
-                inputs=[norm_padded_data],
-                dynamic_numerical_covariates=dynamic_cov,
-                xreg_mode="xreg + timesfm"
-            )
+        # --- 2. Baseline Forecast & Backcast ---
+        base_res = tfm.forecast(
+            inputs=[padded_data],
+            horizon=effective_horizon
+        )
+        p_torch, q_torch = base_res
+        p_np = p_torch.detach().cpu().numpy() if hasattr(p_torch, 'detach') else p_torch
+        q_np = q_torch.detach().cpu().numpy() if hasattr(q_torch, 'detach') else q_torch
+        
+        # --- 2b. Scale Detection & Denormalization ---
+        # If model returned standardized values (e.g. mean ~0-5 while data is ~60+), we denormalize manually.
+        out_mean = np.mean(p_np)
+        if abs(out_mean) < 10.0 and abs(raw_mean) > 20.0:
+            server_debug_log(f"Detected standardized scale ({out_mean:.2f}). Denormalizing...")
+            base_point = p_np * raw_std + raw_mean
+            base_quantiles = q_np * raw_std + raw_mean
         else:
-            # --- 2b. Standard Forecast ---
-            point_forecast, quantile_forecast = tfm.forecast(
-                inputs=[norm_padded_data],
-                horizon=effective_horizon,
-            )
+            server_debug_log(f"Detected raw scale ({out_mean:.2f}). Skipping manual denorm.")
+            base_point = p_np
+            base_quantiles = q_np
         
-        # --- MANUAL DENORMALIZATION ---
-        point_forecast = np.array(point_forecast) * raw_std + raw_mean
-        quantile_forecast = np.array(quantile_forecast) * raw_std + raw_mean
-        
-        # 3. Trim to exact requested horizon
-        point_forecast = point_forecast[:, :req.forecast_length]
-        quantile_forecast = quantile_forecast[:, :req.forecast_length, :]
-        
-        def clean_list(arr):
-            lst = arr.tolist()
-            return [0.0 if (x is None or (not isinstance(x, str) and (x != x or x == float('inf') or x == float('-inf')))) else x for x in lst]
+        # Split into backcast and forecast correctly based on total_ctx
+        if base_point.shape[1] > effective_horizon:
+            backcast_q = base_quantiles[0, :total_ctx, :]
+            forecast_p = base_point[0, total_ctx:]
+            forecast_q = base_quantiles[0, total_ctx:, :]
+        else:
+            server_debug_log("WARNING: Model did not return prepended backcast.")
+            backcast_q = None
+            forecast_p = base_point[0]
+            forecast_q = base_quantiles[0]
 
-        forecast_list = clean_list(point_forecast[0][:req.forecast_length])
-        low_list = clean_list(quantile_forecast[0, :req.forecast_length, 1])
-        high_list = clean_list(quantile_forecast[0, :req.forecast_length, 9])
+        # --- 3. Covariates (XReg) ---
+        # Only use covariates if they are actually being used (not just all zeros)
+        has_real_covariates = req.covariates is not None and any(v != 0 for v in req.covariates)
+        
+        if has_real_covariates:
+            try:
+                required_len = total_ctx + effective_horizon
+                x_data = np.array(req.covariates, dtype=np.float32)
+                if len(x_data) < required_len:
+                    x_data = np.pad(x_data, (0, required_len - len(x_data)), mode='edge')
+                else:
+                    x_data = x_data[:required_len]
+                
+                # TimesFM 2.5 expects list of arrays with shape (total_len, num_covariates)
+                x_input = x_data.reshape(-1, 1) # (N, 1)
+                
+                xreg_p, xreg_q = tfm.forecast_with_covariates(
+                    inputs=[padded_data],
+                    dynamic_numerical_covariates=[x_input],
+                    horizon=effective_horizon
+                )
+                
+                x_p_np = xreg_p.detach().cpu().numpy() if hasattr(xreg_p, 'detach') else xreg_p
+                x_q_np = xreg_q.detach().cpu().numpy() if hasattr(xreg_q, 'detach') else xreg_q
+                
+                # Check scale for XReg too
+                if abs(np.mean(x_p_np)) < 10.0 and abs(raw_mean) > 20.0:
+                    forecast_p = x_p_np[0] * raw_std + raw_mean
+                    forecast_q = x_q_np[0] * raw_std + raw_mean
+                else:
+                    forecast_p = x_p_np[0]
+                    forecast_q = x_q_np[0]
+                server_debug_log(f"XReg applied. Forecast shape: {forecast_p.shape}")
+            except Exception as ex:
+                server_debug_log(f"XReg ERROR (falling back to base): {ex}")
+                server_debug_log(traceback.format_exc())
+
+        # --- 4. Prepare Response ---
+        def clean_list(arr):
+            lst = arr.tolist() if hasattr(arr, 'tolist') else list(arr)
+            return [0.0 if (x is None or (not isinstance(x, (str, int, float)) or x != x or x == float('inf') or x == float('-inf'))) else x for x in lst]
 
         response_dict = {
-            "forecast": forecast_list,
-            "low": low_list,
-            "high": high_list,
+            "forecast": clean_list(forecast_p[:req.forecast_length]),
+            "low": clean_list(forecast_q[:req.forecast_length, 1]), # q10
+            "high": clean_list(forecast_q[:req.forecast_length, 9]), # q90
             "anomalies": [],
             "counterfactual": None
         }
 
-        # 2. Counterfactual
+        # --- 5. Counterfactual ---
         if req.exclude_range and len(req.exclude_range) == 2:
             s_idx = req.exclude_range[0]
-            if 0 < s_idx < len(req.data):
-                context = req.data[:s_idx]
-                total_pred_len = (len(req.data) - s_idx) + req.forecast_length
-                cf_point, _ = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[np.array(context)])
-                response_dict["counterfactual"] = clean_list(cf_point[0][:total_pred_len])
+            if 0 < s_idx < data_len:
+                cf_context = cleaned_data[:s_idx]
+                # Pad cf context to multiple of 32
+                norm_cf_context = (cf_context - raw_mean) / raw_std
+                total_pred_len = (data_len - s_idx) + req.forecast_length
+                cf_res = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[norm_cf_context.astype(np.float32)])
+                cf_p = cf_res[0].detach().cpu().numpy() if hasattr(cf_res[0], 'detach') else cf_res[0]
+                # Manual Denormalization for Counterfactual
+                cf_denorm = cf_p * raw_std + raw_mean
+                # Result includes backcast, so skip it
+                response_dict["counterfactual"] = clean_list(cf_denorm[0, len(cf_context):len(cf_context)+total_pred_len])
 
-        # 3. Pure TimesFM Anomaly Detection
-        try:
-            # We use a sliding window context and 1-step ahead forecasting to evaluate each point.
-            # This is "Pure" because it relies entirely on the model's prediction and uncertainty (quantiles).
-            
-            ctx_len = 512 # Context window for inference
-            min_ctx = 16  # Start detecting earlier for better user visibility
-            
+        # --- 6. Anomaly Detection (using Baseline Backcast) ---
+        if backcast_q is not None:
+            # Slicing off the edge-padding to match original data length
+            real_backcast = backcast_q[pad_len:, :]
             anomalies = []
-            if len(req.data) > min_ctx:
-                server_debug_log(f"Global Anomaly detection start for {len(req.data)} points")
+            min_ctx = 16 
+            
+            # width_floor to handle low-variance/static signals
+            # Using a more conservative floor (0.5 sigma) to match 'Standard' sensitivity feel
+            width_floor = max(0.5 * raw_std, 1e-3)
+            
+            server_debug_log(f"Starting anomaly check: data_len={data_len}, backcast_len={len(real_backcast)}")
+            
+            for i in range(min_ctx, data_len):
+                act = cleaned_data[i]
+                q_row = real_backcast[i]
                 
-                batch_inputs = []
-                actuals = []
-                indices = []
+                d_median = q_row[5] # q50
+                d_low = q_row[1]    # q10
+                d_high = q_row[9]   # q90
                 
-                # Prepare evaluation windows
-                for i in range(min_ctx, len(req.data)):
-                    # Extract raw context window
-                    context = req.data[max(0, i - ctx_len):i]
-                    batch_inputs.append(np.array(context))
-                    actuals.append(req.data[i])
-                    indices.append(i)
+                q_width = max(width_floor, d_high - d_low)
                 
-                # width_floor is 10% of global variations to stabilize sensitivity
-                width_floor = 0.1 * raw_std if raw_std > 0 else 1e-2
+                # Distance from median normalized by uncertainty
+                score = abs(act - d_median) / (q_width / 2.0 + 1e-6)
                 
-                # Process in batches to balance speed and memory
-                batch_size = 64
-                total_scores = []
-                for i in range(0, len(batch_inputs), batch_size):
-                    b_inputs = batch_inputs[i : i + batch_size]
-                    b_actuals = actuals[i : i + batch_size]
-                    b_indices = indices[i : i + batch_size]
-                    
-                    # Normalize using GLOBAL stats (raw_mean, raw_std) to avoid local bias
-                    norm_b_inputs = [(win - raw_mean) / raw_std for win in b_inputs]
-                    
-                    # 1-step ahead forecast with quantiles
-                    _, quantiles = tfm.forecast(horizon=1, inputs=norm_b_inputs)
-                    
-                    for idx, act, q_row in zip(b_indices, b_actuals, quantiles):
-                        # Denormalize based on the same GLOBAL stats
-                        d_median = q_row[0, 5] * raw_std + raw_mean
-                        d_low = q_row[0, 1] * raw_std + raw_mean
-                        d_high = q_row[0, 9] * raw_std + raw_mean
-                        
-                        # Use the larger of model uncertainty or the width floor
-                        q_width = max(width_floor, d_high - d_low)
-                        
-                        # Distance from prediction normalized by uncertainty
-                        # We use 2.0 * threshold logic or similar, but keep it simple:
-                        # (Absolute Error) / (Uncertainty Radius)
-                        score = abs(act - d_median) / (q_width / 2.0 + 1e-6)
-                        total_scores.append(score)
-                        
-                        if score > req.anomaly_threshold:
-                            anomalies.append(idx)
-                
-                avg_score = np.mean(total_scores) if total_scores else 0
-                server_debug_log(f"Anomaly Detection STATS: global_bias_removed, avg_score={avg_score:.2f}, count={len(anomalies)}, threshold={req.anomaly_threshold}")
-                
-                response_dict["anomalies"] = anomalies
-                server_debug_log(f"Pure Anomaly Detection SUCCESS: {len(anomalies)} anomalies found")
-        except Exception as e:
-            server_debug_log(f"Anomaly detection CRITICAL ERROR: {type(e).__name__}: {e}")
-            server_debug_log(traceback.format_exc())
+                if score > req.anomaly_threshold:
+                    anomalies.append(i)
+            
+            response_dict["anomalies"] = anomalies
+            server_debug_log(f"Anomaly Detection SUCCESS: {len(anomalies)} found")
+        else:
+            server_debug_log("Anomaly Detection SKIP: backcast_q is None")
 
         return response_dict
             
