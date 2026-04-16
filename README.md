@@ -34,6 +34,20 @@ npm install
 npm run dev
 ```
 
+### Docker Compose での起動
+
+Docker を用いて、独立したコンテナでフロントエンドとバックエンドを同時に起動することも可能です。
+
+```bash
+docker compose up --build
+```
+
+起動後、ブラウザで [http://localhost:3000](http://localhost:3000) にアクセスするとアプリを利用できます。
+
+- バックエンドは `http://localhost:8000` で動作します。
+- モデルのダウンロードを高速化するため、ホストマシンの `~/.cache/huggingface` がコンテナ内にマウントされます。
+- `JAX_PLATFORMS=cpu` が設定されており、CPU上での推論が行われます。
+
 ### 今後のリリース運用について
 
 本リポジトリではCI（GitHub Actions）と `release-it` を用いた自動リリースフローを構成しています。新しいリリースを切る際は、以下のコマンドを実行してください。

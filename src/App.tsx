@@ -51,6 +51,7 @@ function App() {
   const [eventStartInput, setEventStartInput] = useState('');
   const [eventEndInput, setEventEndInput] = useState('');
   const [sensitivity, setSensitivity] = useState(2.5);
+  const [forecastLength, setForecastLength] = useState(24);
   
   // Zoom state
   const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
@@ -87,11 +88,11 @@ function App() {
   // Auto-run analysis when backend becomes ready
   useEffect(() => {
     if (backendStatus.status === 'ready' && rawRows.length > 0 && selectedValueCol) {
-      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol);
+      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
     }
   }, [backendStatus.status]);
   
-  const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '', currentSensitivity: number = sensitivity) => {
+  const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '', currentSensitivity: number = sensitivity, currentHorizon: number = forecastLength) => {
     try {
       if (!valCol || !rows || rows.length === 0) return;
       
@@ -115,7 +116,7 @@ function App() {
       
       const valuesArray = chartData.map(d => d.value).filter(v => !isNaN(v));
       
-      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, 20, undefined, currentSensitivity);
+      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, currentHorizon, undefined, currentSensitivity);
       
       const chartDataWithAnomalies = chartData.map((item, idx) => ({
         ...item,
@@ -290,7 +291,7 @@ function App() {
       
       const { counterfactual } = await analyzeTimeSeries(
         valuesArray, 
-        20, 
+        forecastLength, 
         selectionRange
       );
       
@@ -712,7 +713,7 @@ function App() {
                       onChange={(e) => {
                         const val = e.target.value;
                         setSelectedTimeCol(val);
-                        runAnalysis(rawRows, val, selectedValueCol, selectedEventCol);
+                        runAnalysis(rawRows, val, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
                       }}
                       disabled={isProcessing}
                     >
@@ -731,7 +732,7 @@ function App() {
                       onChange={(e) => {
                         const val = e.target.value;
                         setSelectedValueCol(val);
-                        runAnalysis(rawRows, selectedTimeCol, val, selectedEventCol);
+                        runAnalysis(rawRows, selectedTimeCol, val, selectedEventCol, sensitivity, forecastLength);
                       }}
                       disabled={isProcessing}
                     >
@@ -749,7 +750,7 @@ function App() {
                       onChange={(e) => {
                         const val = e.target.value;
                         setSelectedEventCol(val);
-                        runAnalysis(rawRows, selectedTimeCol, selectedValueCol, val);
+                        runAnalysis(rawRows, selectedTimeCol, selectedValueCol, val, sensitivity, forecastLength);
                       }}
                       disabled={isProcessing}
                     >
@@ -924,7 +925,7 @@ function App() {
                   }}
                   onMouseUp={() => {
                     if (rawRows.length > 0) {
-                      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity);
+                      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
                     }
                   }}
                 />
@@ -933,10 +934,38 @@ function App() {
                   <span>NORMAL(2.5)</span>
                   <span>STRICT</span>
                 </div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="font-semibold flex items-center gap-1"><BarChart2 className="w-3 h-3 text-primary" /> Forecast Horizon</p>
+                  <span className="text-[10px] text-primary font-mono font-bold">{forecastLength} points</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="1" 
+                  max="256" 
+                  step="1" 
+                  className="w-full accent-primary h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                  value={forecastLength}
+                  onChange={(e) => {
+                    setForecastLength(parseInt(e.target.value));
+                  }}
+                  onMouseUp={() => {
+                    if (rawRows.length > 0) {
+                      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
+                    }
+                  }}
+                />
+                <div className="flex justify-between mt-1 text-[8px] text-slate-500 font-mono">
+                  <span>SHORT</span>
+                  <span>MEDIUM(24-128)</span>
+                  <span>LONG(256)</span>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </aside>
+        </aside>
         
         <main className="glass-card chart-container fade-in" style={{ animationDelay: '0.1s' }}>
           <div className="chart-header">
@@ -971,7 +1000,7 @@ function App() {
           {data.length > 0 ? (
             <div className="w-full flex flex-col flex-1 relative" style={{ minHeight: 0 }}>
               {/* Inference Overlay */}
-              <div className={`inference-overlay ${!isProcessing ? 'hidden' : ''}`}>
+              <div className={`inference-overlay ${!(isProcessing || isCounterfactualLoading) ? 'hidden' : ''}`}>
                 <div className="ai-visual-container">
                   <div className="ai-pulse-ring">
                     <div className="ai-core"></div>
