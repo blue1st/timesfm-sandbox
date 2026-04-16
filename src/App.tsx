@@ -176,14 +176,37 @@ function App() {
     
     // Alt + Scroll or just Scroll? Let's use standard Scroll but check if it's horizontal or vertical
     // On many laptops, deltaY is zoom-like for wheel.
-    if (Math.abs(e.deltaY) < 1) return;
+    if (Math.abs(e.deltaY) < 1 && Math.abs(e.deltaX) < 1) return;
     
     e.preventDefault();
     
     const currentRange = zoomRange || [0, data.length - 1];
     const rangeLength = currentRange[1] - currentRange[0];
-    const zoomFactor = 0.1;
+
+    // Handle Horizontal Pan
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      const panFactor = 0.5;
+      const move = Math.round(e.deltaX * (rangeLength / 500) * panFactor);
+      if (move === 0) return;
+      
+      let newStart = currentRange[0] + move;
+      let newEnd = currentRange[1] + move;
+      
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = rangeLength;
+      }
+      if (newEnd > data.length - 1) {
+        newEnd = data.length - 1;
+        newStart = newEnd - rangeLength;
+      }
+      
+      setZoomRange([newStart, newEnd]);
+      return;
+    }
     
+    // Handle Zoom (deltaY)
+    const zoomFactor = 0.1;
     const direction = e.deltaY > 0 ? 1 : -1; // 1 = Zoom Out, -1 = Zoom In
     
     // Zoom centered on hovered index or middle if not hovered
