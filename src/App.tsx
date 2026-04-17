@@ -64,7 +64,8 @@ function App() {
   const [selectedEventCol, setSelectedEventCol] = useState<string>('');
   
   // Selection & Timezone states
-  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [timezone, setTimezone] = useState('UTC');
+
   const [refAreaLeft, setRefAreaLeft] = useState<number | string | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | string | null>(null);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
