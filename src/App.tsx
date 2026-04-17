@@ -1,6 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import packageJson from '../package.json';
-import { UploadCloud, Play, Activity, Sparkles, FileText, BarChart2, Download, Cloud, Database, Key, X, Trash2 } from 'lucide-react';
+import { 
+  Activity, 
+  Database, 
+  FileText, 
+  Play, 
+  Trash2, 
+  BarChart2, 
+  Download, 
+  Upload as UploadCloud, 
+  Sparkles, 
+  X,
+  Key,
+  HelpCircle,
+  Cloud
+} from 'lucide-react';
 import { 
   ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Scatter, ReferenceArea, Area, ReferenceLine
 } from 'recharts';
@@ -8,7 +22,15 @@ import {
 import { processCSV } from './lib/duckdb';
 import { analyzeTimeSeries } from './lib/transformers';
 import { getBackendUrl } from './lib/backend';
+import t from './lib/i18n';
 import './index.css';
+
+const HelpTooltip = ({ text }: { text: string }) => (
+  <span className="tooltip-container">
+    <HelpCircle className="w-3 h-3" />
+    <span className="tooltip-text">{text}</span>
+  </span>
+);
 
 // Removed local getBackendUrl to use centralized version from ./lib/backend
 
@@ -27,7 +49,7 @@ function App() {
   const [data, setData] = useState<DataPoint[]>([]);
   const [pastedText, setPastedText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [status, setStatus] = useState('Idle');
+  const [status, setStatus] = useState(t.statusIdle);
   const [activeTab, setActiveTab] = useState<'upload' | 'paste' | 'gcs' | 'bigquery'>('paste');
   const [gsUrl, setGsUrl] = useState('');
   const [bqProject, setBqProject] = useState('');
@@ -61,7 +83,7 @@ function App() {
   const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   
-  const [backendStatus, setBackendStatus] = useState<{status: string, message: string, model_id?: string}>({status: 'idle', message: 'Checking backend...'});
+  const [backendStatus, setBackendStatus] = useState<{status: string, message: string, model_id?: string}>({status: 'idle', message: t.statusCheckingBackend});
 
   useEffect(() => {
     document.title = `TimesFM Sandbox v${packageJson.version}`;
@@ -80,7 +102,7 @@ function App() {
           return data;
         });
       } catch (e) {
-        setBackendStatus({status: 'error', message: 'Backend unreachable'});
+        setBackendStatus({status: 'error', message: t.statusBackendUnreachable});
       }
     };
     
@@ -106,7 +128,7 @@ function App() {
       if (!valCol || !rows || rows.length === 0) return;
       
       setIsProcessing(true);
-      setStatus('Detecting anomalies...');
+      setStatus(t.statusDetectingAnomalies);
       
       const chartData: DataPoint[] = rows.map((row, i) => {
         let event_name = undefined;
@@ -188,7 +210,7 @@ function App() {
       }));
       
       setData([...chartDataWithAnomalies, ...predictionData]);
-      setStatus('Complete');
+      setStatus(t.statusComplete);
       setSelectionRange(null);
       
     } catch (error) {
@@ -208,7 +230,7 @@ function App() {
     setSelectedEventCol('');
     setSelectionRange(null);
     setZoomRange(null);
-    setStatus('Idle');
+    setStatus(t.statusIdle);
     setPastedText('');
     setIsProcessing(false);
   };
@@ -287,7 +309,7 @@ function App() {
   const handleDataInput = async (content: string) => {
     try {
       setIsProcessing(true);
-      setStatus('Loading DuckDB & parsing data...');
+      setStatus(t.statusLoadDuckDB);
       
       const newRows = await processCSV(`input_${Date.now()}.csv`, content);
       
@@ -311,7 +333,7 @@ function App() {
       setSelectedValueCol(valColToUse);
       setSelectedEventCol(eventColToUse);
       
-      setStatus('Setting up data...');
+      setStatus(t.statusSettingUpData);
       // No need to call runAnalysis here, the useEffect will trigger it 
       // when rawRows, selectedTimeCol, and selectedValueCol are set.
       
@@ -327,7 +349,7 @@ function App() {
     
     try {
       setIsCounterfactualLoading(true);
-      setStatus('Running Counterfactual Analysis...');
+      setStatus(t.statusRunningCounterfactual);
       
       const observedData = data.filter(d => !d.is_prediction);
       const valuesArray = observedData.map(d => d.value);
@@ -357,7 +379,7 @@ function App() {
         });
         
         setData(updatedData);
-        setStatus('Counterfactual Analysis Complete');
+        setStatus(t.statusCounterfactualComplete);
       }
     } catch (error) {
       console.error(error);
@@ -372,7 +394,7 @@ function App() {
       const { counterfactual, ...rest } = item;
       return rest;
     }));
-    setStatus('Counterfactual Analysis Reset');
+    setStatus(t.statusCounterfactualReset);
   };
 
   const formatTime = (time: any): string => {
@@ -471,16 +493,16 @@ function App() {
 
   const handleGCPAuth = async () => {
     try {
-      setStatus('Wait for Google Auth in browser...');
+      setStatus(t.statusWaitAuth);
       const baseUrl = await getBackendUrl();
       const response = await fetch(`${baseUrl}/gcp/auth`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Auth failed');
       setIsAuthenticated(true);
-      setStatus('Authenticated with Google Cloud');
+      setStatus(t.statusAuthSuccess);
     } catch (e: any) {
       alert(`Authentication failed: ${e.message}\n(Ensure client_secret.json is in the project root)`);
-      setStatus('Auth Failed');
+      setStatus(t.statusAuthFailed);
     }
   };
 
@@ -488,7 +510,7 @@ function App() {
     if (!gsUrl.trim()) return;
     try {
       setIsProcessing(true);
-      setStatus('Loading from GCS...');
+      setStatus(t.statusGCSLoading);
       const baseUrl = await getBackendUrl();
       const response = await fetch(`${baseUrl}/gcp/gcs`, {
         method: 'POST',
@@ -500,7 +522,7 @@ function App() {
       handleDataInput(data.csv);
     } catch (e: any) {
       alert(`GCS Error: ${e.message}`);
-      setStatus('GCS Load Failed');
+      setStatus(t.statusGCSFailed);
       setIsProcessing(false);
     }
   };
@@ -509,7 +531,7 @@ function App() {
     if (!bqProject.trim() || !bqQuery.trim()) return;
     try {
       setIsProcessing(true);
-      setStatus('Executing BigQuery...');
+      setStatus(t.statusBQExecuting);
       const baseUrl = await getBackendUrl();
       const response = await fetch(`${baseUrl}/gcp/bigquery`, {
         method: 'POST',
@@ -521,7 +543,7 @@ function App() {
       handleDataInput(data.csv);
     } catch (e: any) {
       alert(`BigQuery Error: ${e.message}`);
-      setStatus('BigQuery Failed');
+      setStatus(t.statusBQFailed);
       setIsProcessing(false);
     }
   };
@@ -607,7 +629,7 @@ function App() {
       <header>
         <h1>
           <Activity className="w-8 h-8 text-primary" /> 
-          TimesFM Sandbox 
+          {t.title} 
           <span className="text-sm text-slate-500 font-medium ml-2 relative top-1">v{packageJson.version}</span>
         </h1>
         <div className="flex items-center gap-4">
@@ -627,40 +649,40 @@ function App() {
       <div className="main-grid">
         <aside className="side-panel">
           <div className="glass-card input-section fade-in">
-            <h2><FileText className="w-5 h-5" /> Data Source</h2>
+            <h2><FileText className="w-5 h-5" /> {t.sectionDataSource}</h2>
             
             <div className="tabs">
               <button 
                 className={`tab ${activeTab === 'paste' ? 'active' : ''}`}
                 onClick={() => setActiveTab('paste')}
               >
-                Paste
+                {t.tabPaste}
               </button>
               <button 
                 className={`tab ${activeTab === 'upload' ? 'active' : ''}`}
                 onClick={() => setActiveTab('upload')}
               >
-                File
+                {t.tabFile}
               </button>
               <button 
                 className={`tab ${activeTab === 'gcs' ? 'active' : ''}`}
                 onClick={() => setActiveTab('gcs')}
               >
-                GCS
+                {t.tabGCS}
               </button>
               <button 
                 className={`tab ${activeTab === 'bigquery' ? 'active' : ''}`}
                 onClick={() => setActiveTab('bigquery')}
               >
-                BigQuery
+                {t.tabBQ}
               </button>
             </div>
             
             {!isAuthenticated && (activeTab === 'gcs' || activeTab === 'bigquery') && (
               <div className="p-4 mb-4 bg-blue-500/10 border border-blue-500/30 rounded-lg text-sm">
-                <p className="mb-3 text-[#cbd5e1]">Requires Google Cloud authentication using a local OAuth flow.</p>
+                <p className="mb-3 text-[#cbd5e1]">{t.msgRequireAuth}</p>
                 <button className="btn w-full bg-blue-600 hover:bg-blue-500 flex justify-center items-center gap-2" onClick={handleGCPAuth}>
-                  <Key className="w-4 h-4" /> Authenticate with Google
+                  <Key className="w-4 h-4" /> {t.btnAuthenticate}
                 </button>
               </div>
             )}
@@ -668,7 +690,7 @@ function App() {
             {activeTab === 'paste' ? (
               <>
                 <textarea 
-                  placeholder="Paste CSV/TSV here...&#10;Date,Value&#10;2024-01-01,120&#10;2024-01-02,125"
+                  placeholder={t.placeholderPaste}
                   value={pastedText}
                   onChange={(e) => setPastedText(e.target.value)}
                 />
@@ -677,7 +699,7 @@ function App() {
                   onClick={processPastedData}
                   disabled={isProcessing || !pastedText.trim()}
                 >
-                  <Play className="w-4 h-4" /> Analyze Data
+                  <Play className="w-4 h-4" /> {t.btnAnalyzeData}
                 </button>
               </>
             ) : activeTab === 'gcs' ? (
@@ -688,7 +710,7 @@ function App() {
                 <input 
                   type="text" 
                   className="w-full p-3 bg-slate-900 border border-slate-700 rounded-md text-slate-200" 
-                  placeholder="gs://your-bucket-name/data.csv"
+                  placeholder={t.placeholderGCS}
                   value={gsUrl}
                   onChange={(e) => setGsUrl(e.target.value)}
                   disabled={!isAuthenticated}
@@ -698,7 +720,7 @@ function App() {
                   onClick={fetchGCSData}
                   disabled={isProcessing || !gsUrl.trim() || !isAuthenticated}
                 >
-                  <Play className="w-4 h-4" /> Load & Analyze
+                  <Play className="w-4 h-4" /> {t.btnLoadAnalyze}
                 </button>
               </div>
             ) : activeTab === 'bigquery' ? (
@@ -709,7 +731,7 @@ function App() {
                 <input 
                   type="text" 
                   className="w-full p-3 bg-slate-900 border border-slate-700 rounded-md text-slate-200" 
-                  placeholder="GCP Project ID (e.g. my-project-123)"
+                  placeholder={t.placeholderBQProject}
                   value={bqProject}
                   onChange={(e) => setBqProject(e.target.value)}
                   disabled={!isAuthenticated}
@@ -725,7 +747,7 @@ function App() {
                   onClick={fetchBQData}
                   disabled={isProcessing || !bqProject.trim() || !bqQuery.trim() || !isAuthenticated}
                 >
-                  <Play className="w-4 h-4" /> Run Query & Analyze
+                  <Play className="w-4 h-4" /> {t.btnRunQueryAnalyze}
                 </button>
               </div>
             ) : (
@@ -751,11 +773,11 @@ function App() {
             
             {availableColumns.length > 0 && (
               <div className="mt-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700 fade-in">
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Database className="w-4 h-4 text-accent" /> Column Mapping</h3>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Database className="w-4 h-4 text-accent" /> {t.sectionColumnMapping}</h3>
                 
                 <div className="flex flex-col gap-3">
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Time Axis (X)</label>
+                    <label className="block text-xs text-slate-400 mb-1">{t.labelTimeAxis}</label>
                     <select 
                       className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
                       value={selectedTimeCol}
@@ -764,7 +786,7 @@ function App() {
                       }}
                       disabled={isProcessing}
                     >
-                      <option value="">(Auto Index)</option>
+                      <option value="">{t.msgAutoIndex}</option>
                       {availableColumns.map(col => (
                         <option key={col} value={col}>{col}</option>
                       ))}
@@ -772,7 +794,7 @@ function App() {
                   </div>
                   
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Value (Y)</label>
+                    <label className="block text-xs text-slate-400 mb-1">{t.labelValueAxis}</label>
                     <select 
                       className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
                       value={selectedValueCol}
@@ -788,7 +810,7 @@ function App() {
                   </div>
 
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Event Marker Column (Optional)</label>
+                    <label className="block text-xs text-slate-400 mb-1">{t.labelEventColumn}</label>
                     <select 
                       className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-sm text-slate-200"
                       value={selectedEventCol}
@@ -797,7 +819,7 @@ function App() {
                       }}
                       disabled={isProcessing}
                     >
-                      <option value="">(None)</option>
+                      <option value="">{t.msgNone}</option>
                       {availableColumns.map(col => (
                         <option key={col} value={col}>{col}</option>
                       ))}
@@ -809,30 +831,30 @@ function App() {
             
             {data.length > 0 && (
               <div className="mt-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700 fade-in">
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Manual Event Labeling</h3>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> {t.sectionManualEvent}</h3>
                 <div className="flex flex-col gap-2 p-3 bg-slate-900 rounded border border-slate-700">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">Start Time</label>
+                      <label className="block text-xs text-slate-400 mb-1">{t.labelStartTime}</label>
                       <select 
                         className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500"
                         value={eventStartInput}
                         onChange={(e) => setEventStartInput(e.target.value)}
                       >
-                        <option value="">-- Select Start --</option>
+                        <option value="">{t.msgSelectStart}</option>
                         {data.map((d, i) => (
                            <option key={`start-${i}`} value={String(d.index)}>{formatTime(d.index)}</option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-400 mb-1">End Time (Optional)</label>
+                      <label className="block text-xs text-slate-400 mb-1">{t.labelEndTime}</label>
                       <select 
                         className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500"
                         value={eventEndInput}
                         onChange={(e) => setEventEndInput(e.target.value)}
                       >
-                        <option value="">-- Same as Start --</option>
+                        <option value="">{t.msgSameAsStart}</option>
                         {data.map((d, i) => (
                            <option key={`end-${i}`} value={String(d.index)}>{formatTime(d.index)}</option>
                         ))}
@@ -840,11 +862,11 @@ function App() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Event Name</label>
+                    <label className="block text-xs text-slate-400 mb-1">{t.labelEventName}</label>
                     <input 
                       type="text" 
                       className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500"
-                      placeholder="Name of the event"
+                      placeholder={t.placeholderEventName}
                       value={eventNameInput}
                       onChange={(e) => setEventNameInput(e.target.value)}
                     />
@@ -877,7 +899,7 @@ function App() {
                       }}
                       disabled={!eventNameInput.trim() || !eventStartInput.trim()}
                     >
-                      Set Event
+                      {t.btnSetEvent}
                     </button>
                     <button 
                       className="flex-1 btn text-xs py-1 px-2 bg-slate-700 hover:bg-slate-600 text-slate-300 flex justify-center items-center"
@@ -903,7 +925,7 @@ function App() {
                       }}
                       disabled={!eventStartInput.trim()}
                     >
-                      Clear Target Event
+                      {t.btnClearTargetEvent}
                     </button>
                   </div>
                 </div>
@@ -916,7 +938,7 @@ function App() {
                 onClick={resetData}
                 disabled={isProcessing}
               >
-                <Trash2 className="w-4 h-4" /> Reset All Data
+                <Trash2 className="w-4 h-4" /> {t.btnResetAllData}
               </button>
             )}
             
@@ -933,7 +955,7 @@ function App() {
                 onChange={async (e) => {
                   try {
                     const modelId = e.target.value;
-                    setBackendStatus(prev => ({ ...prev, status: 'loading', message: `Switching to ${modelId}...` }));
+                    setBackendStatus(prev => ({ ...prev, status: 'loading', message: `${t.msgModelSwitching} ${modelId}...` }));
                     const baseUrl = await getBackendUrl();
                     await fetch(`${baseUrl}/init_model?model_id=${encodeURIComponent(modelId)}`, { method: 'POST' });
                   } catch (err) {
@@ -952,7 +974,10 @@ function App() {
 
               <div className="mt-4 pt-4 border-t border-slate-700">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="font-semibold flex items-center gap-1"><Sparkles className="w-3 h-3 text-amber-500" /> Anomaly Sensitivity</p>
+                  <p className="font-semibold flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-500" /> {t.sectionAnomalySensitivity}
+                    <HelpTooltip text={t.helpSensitivity} />
+                  </p>
                   <span className="text-[10px] text-amber-500 font-mono font-bold">{sensitivity.toFixed(1)}σ</span>
                 </div>
                 <input 
@@ -976,7 +1001,10 @@ function App() {
 
               <div className="mt-4 pt-4 border-t border-slate-700">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="font-semibold flex items-center gap-1"><BarChart2 className="w-3 h-3 text-primary" /> Forecast Horizon</p>
+                  <p className="font-semibold flex items-center gap-1">
+                    <BarChart2 className="w-3 h-3 text-primary" /> {t.sectionForecastHorizon}
+                    <HelpTooltip text={t.helpHorizon} />
+                  </p>
                   <span className="text-[10px] text-primary font-mono font-bold">{forecastLength} points</span>
                 </div>
                 <input 
@@ -1000,16 +1028,20 @@ function App() {
               {/* Advanced Parameters */}
               <details className="mt-4 pt-4 border-t border-slate-700 group">
                 <summary className="text-xs font-semibold text-slate-400 cursor-pointer hover:text-slate-200 flex items-center justify-between list-none">
-                  <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> Advanced Parameters</span>
+                  <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> {t.sectionAdvancedParams}</span>
                   <span className="group-open:rotate-180 transition-transform">▼</span>
                 </summary>
-                
+
                 <div className="mt-4 space-y-4">
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-[10px] font-semibold text-slate-400">Anomaly Detection Start (min_ctx)</p>
+                      <p className="text-[10px] font-semibold text-slate-400">
+                        {t.labelAnomalyStart}
+                        <HelpTooltip text={t.helpMinCtx} />
+                      </p>
                       <span className="text-[10px] text-slate-300 font-mono">{anomalyMinCtx}</span>
                     </div>
+
                     <input 
                       type="range" 
                       min="1" 
@@ -1023,9 +1055,13 @@ function App() {
 
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-[10px] font-semibold text-slate-400">Uncertainty Floor Multiplier</p>
+                      <p className="text-[10px] font-semibold text-slate-400">
+                        {t.labelUncertaintyFloor}
+                        <HelpTooltip text={t.helpWidthMult} />
+                      </p>
                       <span className="text-[10px] text-slate-300 font-mono">{anomalyWidthMultiplier.toFixed(2)}</span>
                     </div>
+
                     <input 
                       type="range" 
                       min="0.0" 
@@ -1039,21 +1075,28 @@ function App() {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[10px] text-slate-400 mb-1">Context Multiple</label>
+                      <label className="block text-[10px] text-slate-400 mb-1">
+                        {t.labelContextMultiple}
+                        <HelpTooltip text={t.helpCtxMult} />
+                      </label>
                       <select 
                         className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-slate-200"
                         value={contextMultiple}
                         onChange={(e) => setContextMultiple(parseInt(e.target.value))}
                       >
-                        <option value="1">1 (None)</option>
+                        <option value="1">1 ({t.msgNone})</option>
                         <option value="8">8</option>
                         <option value="16">16</option>
                         <option value="32">32 (Default)</option>
                         <option value="64">64</option>
+
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-400 mb-1">Max Horizon</label>
+                      <label className="block text-[10px] text-slate-400 mb-1">
+                        {t.labelMaxHorizon}
+                        <HelpTooltip text={t.helpMaxHorizon} />
+                      </label>
                       <select 
                         className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-slate-200"
                         value={effectiveHorizon}
@@ -1066,6 +1109,7 @@ function App() {
                       </select>
                     </div>
                   </div>
+
                 </div>
               </details>
             </div>
@@ -1076,7 +1120,7 @@ function App() {
           <div className="chart-header">
             <h2 className="chart-title flex items-center gap-2">
               <BarChart2 className="w-5 h-5 text-accent" />
-              Analysis Results
+              {t.sectionAnalysisResults}
             </h2>
             <div className="flex gap-2">
               {data.some(d => d.counterfactual !== undefined) && (
@@ -1084,22 +1128,23 @@ function App() {
                   className="btn text-sm px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center gap-2" 
                   onClick={clearCounterfactual}
                 >
-                  <X className="w-4 h-4" /> Clear Effect
+                  <X className="w-4 h-4" /> {t.btnClearEffect}
                 </button>
               )}
               {data.length > 0 && (
                 <>
                   {zoomRange && (
                     <button className="btn text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-200 flex items-center gap-2" onClick={() => setZoomRange(null)}>
-                      Reset Zoom
+                      {t.btnResetZoom}
                     </button>
                   )}
                   <button className="btn text-sm px-3 py-1.5 bg-[rgba(255,255,255,0.1)] hover:bg-[rgba(255,255,255,0.2)] border border-[#334155] flex items-center gap-2" onClick={exportToCSV}>
-                    <Download className="w-4 h-4" /> Export CSV
+                    <Download className="w-4 h-4" /> {t.btnExportCSV}
                   </button>
                 </>
               )}
             </div>
+
           </div>
           
           {data.length > 0 ? (
@@ -1110,7 +1155,7 @@ function App() {
                   <div className="ai-pulse-ring">
                     <div className="ai-core"></div>
                   </div>
-                  <div className="inference-text">Inference in Progress</div>
+                  <div className="inference-text">{t.msgInferenceInProgress}</div>
                   <div className="scanning-container">
                     <div className="scanning-bar"></div>
                   </div>
@@ -1120,7 +1165,8 @@ function App() {
 
               <div className="flex justify-between items-center mb-4 shrink-0">
                 <div className="flex gap-4 items-center">
-                  <div className="text-sm font-medium text-slate-400">Timezone:</div>
+                  <div className="text-sm font-medium text-slate-400">{t.labelTimezone}:</div>
+
                   <select 
                     className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-sm text-slate-200"
                     value={timezone}
@@ -1137,14 +1183,15 @@ function App() {
                 {selectionRange && (
                   <div className="flex gap-2 items-center fade-in">
                     <span className="text-xs text-slate-400">
-                      Selected: Index {selectionRange[0]}{selectionRange[0] !== selectionRange[1] ? ` - ${selectionRange[1]}` : ''}
+                      {t.msgSelected}: Index {selectionRange[0]}{selectionRange[0] !== selectionRange[1] ? ` - ${selectionRange[1]}` : ''}
                     </span>
                     <button 
                       className="btn btn-primary text-xs py-1 px-3 flex items-center gap-1"
                       onClick={runCounterfactual}
                       disabled={isCounterfactualLoading}
                     >
-                      <Sparkles className="w-3 h-3" /> Estimate Effect
+                      <Sparkles className="w-3 h-3" /> {t.btnEstimateEffect}
+
                     </button>
                     <button 
                       className="btn text-xs py-1 px-3 bg-slate-700 hover:bg-slate-600 flex items-center justify-center"
@@ -1212,7 +1259,7 @@ function App() {
                     stroke="#3b82f6" 
                     strokeWidth={2}
                     dot={false}
-                    name="Actual"
+                    name={t.legendActual}
                     connectNulls
                     isAnimationActive={false}
                   />
@@ -1224,7 +1271,8 @@ function App() {
                     strokeWidth={2} 
                     strokeDasharray="5 5"
                     dot={false}
-                    name="TimesFM Forecast"
+                    name={t.legendForecast}
+
                     connectNulls
                     isAnimationActive={false}
                   />
@@ -1232,7 +1280,7 @@ function App() {
                   <Scatter 
                     dataKey="anomaly_value" 
                     fill="#ef4444" 
-                    name="Anomaly"
+                    name={t.legendAnomaly}
                     isAnimationActive={false}
                   />
 
@@ -1243,7 +1291,8 @@ function App() {
                     strokeWidth={2} 
                     strokeDasharray="3 3"
                     dot={false}
-                    name="No-Event Counterfactual"
+                    name={t.legendCounterfactual}
+
                     connectNulls
                     isAnimationActive={false}
                   />
@@ -1254,7 +1303,7 @@ function App() {
                     stroke="none"
                     fill="#8b5cf6"
                     fillOpacity={0.15}
-                    name="Prediction Interval (80%)"
+                    name={t.legendInterval}
                     connectNulls
                     isAnimationActive={false}
                   />
@@ -1289,18 +1338,20 @@ function App() {
               </ResponsiveContainer>
             </div>
               <div className="flex gap-4 mt-4 text-sm justify-center flex-wrap shrink-0">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> Actual</div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500 border border-violet-500" style={{ borderStyle: 'dotted' }}></div> Forecast</div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-violet-500/30"></div> Interval (80%)</div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500"></div> Anomaly</div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-dashed border-emerald-500 bg-transparent"></div> Counterfactual</div>
-                <div className="flex items-center gap-2"><div className="w-0.5 h-3 bg-amber-500 border-amber-500" style={{ borderStyle: 'dashed' }}></div> Event Marker</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> {t.legendActual}</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500 border border-violet-500" style={{ borderStyle: 'dotted' }}></div> {t.legendForecast}</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-violet-500/30"></div> {t.legendInterval}</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500"></div> {t.legendAnomaly}</div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-dashed border-emerald-500 bg-transparent"></div> {t.legendCounterfactual}</div>
+                <div className="flex items-center gap-2"><div className="w-0.5 h-3 bg-amber-500 border-amber-500" style={{ borderStyle: 'dashed' }}></div> {t.legendEventMarker}</div>
               </div>
+
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-[#94a3b8]">
               <BarChart2 className="w-16 h-16 opacity-20 mb-4" />
-              <p>Upload or paste data to view analysis</p>
+              <p>{t.msgNoData}</p>
+
             </div>
           )}
         </main>
