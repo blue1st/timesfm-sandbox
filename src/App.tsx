@@ -831,7 +831,11 @@ function App() {
             
             {data.length > 0 && (
               <div className="mt-4 p-4 bg-slate-800/50 rounded-lg border border-slate-700 fade-in">
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> {t.sectionManualEvent}</h3>
+                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-500" /> {t.sectionManualEvent}
+                  <HelpTooltip text={t.helpEventLabeling} />
+                </h3>
+
                 <div className="flex flex-col gap-2 p-3 bg-slate-900 rounded border border-slate-700">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -1191,6 +1195,8 @@ function App() {
                       disabled={isCounterfactualLoading}
                     >
                       <Sparkles className="w-3 h-3" /> {t.btnEstimateEffect}
+                      <HelpTooltip text={t.helpCounterfactual} />
+
 
                     </button>
                     <button 

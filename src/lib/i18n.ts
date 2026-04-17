@@ -88,6 +88,8 @@ const en = {
   helpWidthMult: "Multiplier for the minimum uncertainty floor. Increases tolerance for noise in low-variance signals.",
   helpCtxMult: "Data alignment multiple for TimesFM 2.5. Default is 32; changing this may affect performance or stability.",
   helpMaxHorizon: "The pre-compiled maximum prediction length the model can output in one inference step.",
+  helpCounterfactual: "Estimates what the data would have looked like if the selected event had not occurred, allowing you to quantify its impact.",
+  helpEventLabeling: "Labeling specific periods as events allows TimesFM to understand which fluctuations are one-time impacts versus regular trends.",
 };
 
 const ja = {
@@ -180,6 +182,8 @@ const ja = {
   helpWidthMult: "不確実性の最小境界値の倍率です。値を大きくすると、変動の少ないデータでのノイズに強くなります。",
   helpCtxMult: "TimesFM 2.5のデータアライメント倍数です。通常は32を使用します。",
   helpMaxHorizon: "モデルが一度の推論で出力可能な最大予測長です。",
+  helpCounterfactual: "選択したイベントが発生しなかった場合の予測値を計算し、イベントによる影響を定量化します。対象範囲を選択して実行してください。",
+  helpEventLabeling: "特定の期間をイベントとして指定します。イベントとしての振る舞い（スパイクなど）をモデルに教えることで、通常の傾向と分離できます。",
 };
 
 
