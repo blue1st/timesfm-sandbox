@@ -5,7 +5,11 @@ export async function analyzeTimeSeries(
   forecastLength: number = 20, 
   excludeRange?: [number, number],
   sensitivity: number = 2.5,
-  covariates?: number[]
+  covariates?: number[],
+  anomalyMinCtx: number = 16,
+  anomalyWidthMultiplier: number = 0.5,
+  contextMultiple: number = 32,
+  effectiveHorizon: number = 128
 ): Promise<{forecast: number[], anomalies: number[], low?: number[], high?: number[], counterfactual?: number[]}> {
   console.log("Requesting TimesFM analysis from Python Backend...");
   
@@ -22,7 +26,11 @@ export async function analyzeTimeSeries(
         forecast_length: forecastLength,
         exclude_range: excludeRange,
         anomaly_threshold: sensitivity,
-        covariates: covariates
+        covariates: covariates,
+        anomaly_min_ctx: anomalyMinCtx,
+        anomaly_width_multiplier: anomalyWidthMultiplier,
+        context_multiple: contextMultiple,
+        effective_horizon: effectiveHorizon
       }),
     });
   } catch (err) {

@@ -52,6 +52,10 @@ function App() {
   const [eventEndInput, setEventEndInput] = useState('');
   const [sensitivity, setSensitivity] = useState(2.5);
   const [forecastLength, setForecastLength] = useState(24);
+  const [anomalyMinCtx, setAnomalyMinCtx] = useState(16);
+  const [anomalyWidthMultiplier, setAnomalyWidthMultiplier] = useState(0.5);
+  const [contextMultiple, setContextMultiple] = useState(32);
+  const [effectiveHorizon, setEffectiveHorizon] = useState(128);
   
   // Zoom state
   const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
@@ -91,13 +95,13 @@ function App() {
     if (rawRows.length === 0 || !selectedValueCol) return;
 
     const handler = setTimeout(() => {
-      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength);
+      runAnalysis(rawRows, selectedTimeCol, selectedValueCol, selectedEventCol, sensitivity, forecastLength, anomalyMinCtx, anomalyWidthMultiplier, contextMultiple, effectiveHorizon);
     }, 500);
 
     return () => clearTimeout(handler);
-  }, [sensitivity, forecastLength, selectedTimeCol, selectedValueCol, selectedEventCol, rawRows, backendStatus.status]);
+  }, [sensitivity, forecastLength, anomalyMinCtx, anomalyWidthMultiplier, contextMultiple, effectiveHorizon, selectedTimeCol, selectedValueCol, selectedEventCol, rawRows, backendStatus.status]);
   
-  const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '', currentSensitivity: number = sensitivity, currentHorizon: number = forecastLength) => {
+  const runAnalysis = async (rows: any[], timeCol: string, valCol: string, eventCol: string = '', currentSensitivity: number = sensitivity, currentHorizon: number = forecastLength, currentMinCtx: number = anomalyMinCtx, currentWidthMult: number = anomalyWidthMultiplier, currentCtxMult: number = contextMultiple, currentEffHorizon: number = effectiveHorizon) => {
     try {
       if (!valCol || !rows || rows.length === 0) return;
       
@@ -154,7 +158,7 @@ function App() {
       
       const valuesArray = chartData.map(d => d.value).filter(v => !isNaN(v));
       
-      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, currentHorizon, undefined, currentSensitivity, covariates);
+      const { forecast, anomalies, low, high } = await analyzeTimeSeries(valuesArray, currentHorizon, undefined, currentSensitivity, covariates, currentMinCtx, currentWidthMult, currentCtxMult, currentEffHorizon);
       
       const chartDataWithAnomalies = chartData.map((item, idx) => ({
         ...item,
@@ -331,7 +335,13 @@ function App() {
       const { counterfactual } = await analyzeTimeSeries(
         valuesArray, 
         forecastLength, 
-        selectionRange
+        selectionRange,
+        sensitivity,
+        undefined,
+        anomalyMinCtx,
+        anomalyWidthMultiplier,
+        contextMultiple,
+        effectiveHorizon
       );
       
       if (counterfactual) {
@@ -986,6 +996,78 @@ function App() {
                   <span>LONG(256)</span>
                 </div>
               </div>
+
+              {/* Advanced Parameters */}
+              <details className="mt-4 pt-4 border-t border-slate-700 group">
+                <summary className="text-xs font-semibold text-slate-400 cursor-pointer hover:text-slate-200 flex items-center justify-between list-none">
+                  <span className="flex items-center gap-1"><Activity className="w-3 h-3" /> Advanced Parameters</span>
+                  <span className="group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] font-semibold text-slate-400">Anomaly Detection Start (min_ctx)</p>
+                      <span className="text-[10px] text-slate-300 font-mono">{anomalyMinCtx}</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="1" 
+                      max="128" 
+                      step="1" 
+                      className="w-full accent-slate-400 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                      value={anomalyMinCtx}
+                      onChange={(e) => setAnomalyMinCtx(parseInt(e.target.value))}
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] font-semibold text-slate-400">Uncertainty Floor Multiplier</p>
+                      <span className="text-[10px] text-slate-300 font-mono">{anomalyWidthMultiplier.toFixed(2)}</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="0.0" 
+                      max="2.0" 
+                      step="0.05" 
+                      className="w-full accent-slate-400 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                      value={anomalyWidthMultiplier}
+                      onChange={(e) => setAnomalyWidthMultiplier(parseFloat(e.target.value))}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-1">Context Multiple</label>
+                      <select 
+                        className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-slate-200"
+                        value={contextMultiple}
+                        onChange={(e) => setContextMultiple(parseInt(e.target.value))}
+                      >
+                        <option value="1">1 (None)</option>
+                        <option value="8">8</option>
+                        <option value="16">16</option>
+                        <option value="32">32 (Default)</option>
+                        <option value="64">64</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-1">Max Horizon</label>
+                      <select 
+                        className="w-full bg-slate-900 border border-slate-700 rounded p-1 text-[10px] text-slate-200"
+                        value={effectiveHorizon}
+                        onChange={(e) => setEffectiveHorizon(parseInt(e.target.value))}
+                      >
+                        <option value="64">64</option>
+                        <option value="128">128 (Default)</option>
+                        <option value="256">256</option>
+                        <option value="512">512</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </aside>

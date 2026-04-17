@@ -75,6 +75,10 @@ class PredictRequest(BaseModel):
     exclude_range: Optional[List[int]] = None
     anomaly_threshold: float = 2.5 # Used as quantile index or sigma
     covariates: Optional[List[float]] = None # New: External regressors (0/1 for events etc)
+    anomaly_min_ctx: int = 16
+    anomaly_width_multiplier: float = 0.5
+    context_multiple: int = 32
+    effective_horizon: int = 128
 
 class AnalyzeResponse(BaseModel):
     forecast: List[float]
@@ -185,14 +189,17 @@ def analyze(req: PredictRequest):
         
         server_debug_log(f"Inference Stats: mean={raw_mean:.2f}, std={raw_std:.2f}")
 
-        # TimesFM 2.5 Torch patching requires context to be a multiple of 32.
-        context_multiple = 32
+        context_multiple = req.context_multiple
         pad_len = (context_multiple - data_len % context_multiple) % context_multiple
         padded_data = np.pad(cleaned_data, (pad_len, 0), mode='edge')
         total_ctx = len(padded_data)
         
-        effective_horizon = 128 # Multiple of output patch size
-        server_debug_log(f"Alignment: data_len={data_len}, pad_len={pad_len}, total_ctx={total_ctx}")
+        effective_horizon = max(req.effective_horizon, req.forecast_length) 
+        # Ensure it's a multiple of 32 for TimesFM 2.5 if context_multiple is 32
+        if context_multiple == 32:
+            effective_horizon = ((effective_horizon + 31) // 32) * 32
+            
+        server_debug_log(f"Alignment: data_len={data_len}, pad_len={pad_len}, total_ctx={total_ctx}, eff_horizon={effective_horizon}")
 
         # --- 2. Baseline Forecast & Backcast ---
         base_res = tfm.forecast(
@@ -281,26 +288,48 @@ def analyze(req: PredictRequest):
             s_idx = req.exclude_range[0]
             if 0 < s_idx < data_len:
                 cf_context = cleaned_data[:s_idx]
-                # Pad cf context to multiple of 32
                 norm_cf_context = (cf_context - raw_mean) / raw_std
+                
+                # Apply same padding as baseline to respect context_multiple (required for TimesFM 2.5)
+                cf_len = len(norm_cf_context)
+                cf_pad_len = (context_multiple - cf_len % context_multiple) % context_multiple
+                padded_cf_context = np.pad(norm_cf_context, (cf_pad_len, 0), mode='edge')
+                
                 total_pred_len = (data_len - s_idx) + req.forecast_length
-                cf_res = tfm.forecast(horizon=min(total_pred_len, 256), inputs=[norm_cf_context.astype(np.float32)])
+                
+                # Ensure horizon is multiple of 32 too if needed
+                cf_horizon = min(total_pred_len, 512)
+                if context_multiple == 32:
+                    cf_horizon = ((cf_horizon + 31) // 32) * 32
+                
+                cf_res = tfm.forecast(
+                    horizon=cf_horizon, 
+                    inputs=[padded_cf_context.astype(np.float32)]
+                )
                 cf_p = cf_res[0].detach().cpu().numpy() if hasattr(cf_res[0], 'detach') else cf_res[0]
+                
                 # Manual Denormalization for Counterfactual
-                cf_denorm = cf_p * raw_std + raw_mean
-                # Result includes backcast, so skip it
-                response_dict["counterfactual"] = clean_list(cf_denorm[0, len(cf_context):len(cf_context)+total_pred_len])
+                cf_denorm = cf_p[0] * raw_std + raw_mean
+                
+                # Result includes backcast if return_backcast=True, so skip it
+                # The tfm.forecast for 2.5 torch returns [Batch, total_ctx + horizon] or just [Batch, horizon]
+                # Based on model configuration return_backcast=True
+                if cf_p.shape[1] > cf_horizon:
+                    # Skip padded backcast
+                    response_dict["counterfactual"] = clean_list(cf_denorm[cf_pad_len + cf_len : cf_pad_len + cf_len + total_pred_len])
+                else:
+                    response_dict["counterfactual"] = clean_list(cf_denorm[:total_pred_len])
 
         # --- 6. Anomaly Detection (using Baseline Backcast) ---
         if backcast_q is not None:
             # Slicing off the edge-padding to match original data length
             real_backcast = backcast_q[pad_len:, :]
             anomalies = []
-            min_ctx = 16 
+            min_ctx = req.anomaly_min_ctx 
             
             # width_floor to handle low-variance/static signals
             # Using a more conservative floor (0.5 sigma) to match 'Standard' sensitivity feel
-            width_floor = max(0.5 * raw_std, 1e-3)
+            width_floor = max(req.anomaly_width_multiplier * raw_std, 1e-3)
             
             server_debug_log(f"Starting anomaly check: data_len={data_len}, backcast_len={len(real_backcast)}")
             
