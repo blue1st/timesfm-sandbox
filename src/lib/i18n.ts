@@ -72,8 +72,8 @@ const en = {
   legendEventMarker: "Event Marker",
 
   msgNoData: "Upload or paste data to view analysis",
-  msgRequireAuth: "Requires Google Cloud authentication using a local OAuth flow.",
-  msgAuthHint: "Ensure client_secret.json is in the project root",
+  msgRequireAuth: "Requires Google Cloud authentication.",
+  msgAuthHint: "Run 'gcloud auth application-default login' or place client_secret.json in the project root.",
   msgModelSwitching: "Switching to",
   msgInferenceInProgress: "Inference in Progress",
   msgSelected: "Selected",
@@ -164,8 +164,8 @@ const ja = {
   legendEventMarker: "イベントマーカー",
 
   msgNoData: "データをアップロードまたは貼り付けて分析を開始してください",
-  msgRequireAuth: "ローカルOAuthフローによるGoogle Cloud認証が必要です。",
-  msgAuthHint: "プロジェクトルートに client_secret.json があることを確認してください",
+  msgRequireAuth: "Google Cloud 認証が必要です。",
+  msgAuthHint: "'gcloud auth application-default login' を実行するか、プロジェクトルートに client_secret.json を配置してください。",
   msgModelSwitching: "モデル切替中:",
   msgInferenceInProgress: "推論実行中",
   msgSelected: "選択範囲",

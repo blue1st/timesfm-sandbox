@@ -15,7 +15,18 @@ SCOPES = [
 CREDENTIALS_FILE = "client_secret.json"
 TOKEN_FILE = "token.json"
 
+import google.auth
+
 def authenticate_gcp():
+    # Attempt to use Application Default Credentials (ADC) first
+    try:
+        creds, project = google.auth.default(scopes=SCOPES)
+        if creds:
+            # Check if we can actually use these creds (refresh if needed is handled by clients)
+            return creds
+    except google.auth.exceptions.DefaultCredentialsError:
+        pass
+
     creds = None
     if os.path.exists(TOKEN_FILE):
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
@@ -25,13 +36,14 @@ def authenticate_gcp():
             creds.refresh(Request())
         else:
             if not os.path.exists(CREDENTIALS_FILE):
-                raise FileNotFoundError("Google Cloudのクライアントシークレットファイル(client_secret.json)が見つかりません。")
+                raise FileNotFoundError("GCP認証情報が見つかりません。'gcloud auth application-default login' を実行するか、'client_secret.json' を配置してください。")
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
         
         with open(TOKEN_FILE, 'w') as token:
             token.write(creds.to_json())
     return creds
+
 
 def query_bigquery(query: str, project_id: str) -> str:
     creds = authenticate_gcp()
