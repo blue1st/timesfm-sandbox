@@ -52,13 +52,9 @@ cask "${CASK_NAME}" do
   # Only support Apple Silicon
   depends_on arch: :arm64
 
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/TimesFM Sandbox.app"],
-                   sudo: false
-    system_command "/usr/bin/codesign",
-                   args: ["--force", "--deep", "--sign", "-", "#{appdir}/TimesFM Sandbox.app"],
-                   sudo: false
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/TimesFM Sandbox.app"]
+    run "/usr/bin/codesign", args: ["--force", "--deep", "--sign", "-", "#{appdir}/TimesFM Sandbox.app"]
   end
 
   zap trash: [
