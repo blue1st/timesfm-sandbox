@@ -133,9 +133,18 @@ jobs:
           echo "Downloaded files:"
           ls -la *.dmg
 
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: blue1st
+          repositories: homebrew-taps
+
       - name: Update Homebrew Tap
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           if [ -d "scripts" ] && [ -f "scripts/update-homebrew.sh" ]; then
             chmod +x scripts/update-homebrew.sh
