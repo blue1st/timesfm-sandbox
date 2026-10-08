@@ -52,10 +52,10 @@ cask "${CASK_NAME}" do
   # Only support Apple Silicon
   depends_on arch: :arm64
 
-  postflight_steps do
-    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{appdir}/TimesFM Sandbox.app"]
-    run "/usr/bin/codesign", args: ["--force", "--deep", "--sign", "-", "#{appdir}/TimesFM Sandbox.app"]
-  end
+  caveats <<~EOS
+    TimesFM Sandbox is not notarized. If macOS blocks it from running, execute:
+      xattr -cr "/Applications/TimesFM Sandbox.app"
+  EOS
 
   zap trash: [
     "~/Library/Application Support/com.blue1st.timesfm-sandbox",
